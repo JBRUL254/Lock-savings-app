@@ -14,35 +14,12 @@ export default function App() {
   const [error, setError] = useState("");
   const [page, setPage] = useState("dashboard");
 
-  // Deposit & Withdraw
   const [depositAmount, setDepositAmount] = useState(0);
   const [withdrawAmount, setWithdrawAmount] = useState(0);
 
-  // Data
   const [deposits, setDeposits] = useState([]);
   const [loans, setLoans] = useState([]);
   const [totalSavings, setTotalSavings] = useState(0);
-
-  // Paystack loaded state
-  const [paystackLoaded, setPaystackLoaded] = useState(false);
-
-  // ---------------- LOAD PAYSTACK SCRIPT ----------------
-  useEffect(() => {
-    if (!document.getElementById("paystack-script")) {
-      const script = document.createElement("script");
-      script.id = "paystack-script";
-      script.src = "https://js.paystack.co/v1/inline.js";
-      script.async = true;
-      script.onload = () => {
-        setPaystackLoaded(true);
-        console.log("Paystack loaded!");
-      };
-      script.onerror = () => console.error("Failed to load Paystack");
-      document.body.appendChild(script);
-    } else {
-      setPaystackLoaded(true);
-    }
-  }, []);
 
   // ---------------- AUTH ----------------
   useEffect(() => {
@@ -88,15 +65,14 @@ export default function App() {
   const depositWithPaystack = async () => {
     if (!user) return alert("Please login first");
     if (depositAmount <= 0) return alert("Enter a valid amount");
-    if (!paystackLoaded || !window.PaystackPop)
-      return alert("Paystack not ready. Try again in a moment.");
 
-    const paystackAmount = depositAmount * 100; // convert KES to kobo
+    if (!window.PaystackPop)
+      return alert("Paystack not loaded. Refresh the page and try again.");
 
     const handler = window.PaystackPop.setup({
       key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
       email: user.email,
-      amount: paystackAmount,
+      amount: depositAmount * 100, // convert KES to kobo
       currency: "KES",
       ref: `lock_savings_${Math.floor(Math.random() * 1000000000)}`,
       onClose: () => alert("Payment window closed"),
@@ -220,7 +196,6 @@ export default function App() {
   // ---------------- DASHBOARD ----------------
   return (
     <div style={{ fontFamily: "Arial", minHeight: "100vh" }}>
-      {/* NAV */}
       <div style={styles.nav}>
         <strong>Lock Savings</strong>
         <div>
@@ -235,7 +210,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* CONTENT */}
       <div style={{ padding: 20 }}>
         {page === "dashboard" && (
           <>
