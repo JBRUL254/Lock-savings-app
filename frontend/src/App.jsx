@@ -23,7 +23,18 @@ export default function App() {
   const [loans, setLoans] = useState([]);
   const [totalSavings, setTotalSavings] = useState(0);
 
-  // Check auth and fetch data
+  // ---------------- LOAD PAYSTACK SCRIPT ----------------
+  useEffect(() => {
+    if (!document.getElementById("paystack-script")) {
+      const script = document.createElement("script");
+      script.id = "paystack-script";
+      script.src = "https://js.paystack.co/v1/inline.js";
+      script.async = true;
+      document.body.appendChild(script);
+    }
+  }, []);
+
+  // ---------------- AUTH ----------------
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       if (data?.user) setUser(data.user);
@@ -68,7 +79,10 @@ export default function App() {
     if (!user) return alert("Please login first");
     if (depositAmount <= 0) return alert("Enter a valid amount");
 
-    const paystackAmount = depositAmount * 100; // convert to kobo
+    if (!window.PaystackPop)
+      return alert("Paystack not loaded. Try again in a moment.");
+
+    const paystackAmount = depositAmount * 100; // convert KES to kobo
     const handler = window.PaystackPop.setup({
       key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
       email: user.email,
@@ -78,6 +92,7 @@ export default function App() {
       onClose: () => alert("Payment window closed"),
       callback: async (response) => {
         alert(`Payment successful! Reference: ${response.reference}`);
+
         const { error } = await supabase.from("deposits").insert([
           {
             user_id: user.id,
@@ -86,13 +101,15 @@ export default function App() {
             status: "success",
           },
         ]);
+
         if (error) console.error("Error saving deposit:", error);
         else {
           setDepositAmount(0);
-          fetchDeposits(); // refresh total savings
+          fetchDeposits();
         }
       },
     });
+
     handler.openIframe();
   };
 
