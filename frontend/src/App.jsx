@@ -23,6 +23,9 @@ export default function App() {
   const [loans, setLoans] = useState([]);
   const [totalSavings, setTotalSavings] = useState(0);
 
+  // Paystack loaded state
+  const [paystackLoaded, setPaystackLoaded] = useState(false);
+
   // ---------------- LOAD PAYSTACK SCRIPT ----------------
   useEffect(() => {
     if (!document.getElementById("paystack-script")) {
@@ -30,7 +33,14 @@ export default function App() {
       script.id = "paystack-script";
       script.src = "https://js.paystack.co/v1/inline.js";
       script.async = true;
+      script.onload = () => {
+        setPaystackLoaded(true);
+        console.log("Paystack loaded!");
+      };
+      script.onerror = () => console.error("Failed to load Paystack");
       document.body.appendChild(script);
+    } else {
+      setPaystackLoaded(true);
     }
   }, []);
 
@@ -78,11 +88,11 @@ export default function App() {
   const depositWithPaystack = async () => {
     if (!user) return alert("Please login first");
     if (depositAmount <= 0) return alert("Enter a valid amount");
-
-    if (!window.PaystackPop)
-      return alert("Paystack not loaded. Try again in a moment.");
+    if (!paystackLoaded || !window.PaystackPop)
+      return alert("Paystack not ready. Try again in a moment.");
 
     const paystackAmount = depositAmount * 100; // convert KES to kobo
+
     const handler = window.PaystackPop.setup({
       key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
       email: user.email,
