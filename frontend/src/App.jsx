@@ -218,6 +218,22 @@ export default function App() {
             <p>
               Total Savings: <strong>KES {totalSavings.toLocaleString()}</strong>
             </p>
+
+            {/* Dashboard Image */}
+            <div style={{ marginTop: 20, textAlign: "center" }}>
+              <img
+                src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=600&q=80"
+                alt="Beautiful lady"
+                style={{
+                  width: "300px",
+                  borderRadius: 12,
+                  boxShadow: "0 5px 15px rgba(0,0,0,0.2)",
+                }}
+              />
+              <p style={{ marginTop: 10, fontWeight: "bold", fontSize: 16 }}>
+                Save with LockSavings
+              </p>
+            </div>
           </>
         )}
 
