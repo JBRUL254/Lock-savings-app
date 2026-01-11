@@ -14,11 +14,28 @@ export default function App() {
   const [error, setError] = useState("");
   const [page, setPage] = useState("dashboard");
 
+  // Deposit & Withdraw
+  const [depositAmount, setDepositAmount] = useState(0);
+  const [withdrawAmount, setWithdrawAmount] = useState(0);
+
+  // Data
+  const [deposits, setDeposits] = useState([]);
+  const [loans, setLoans] = useState([]);
+  const [totalSavings, setTotalSavings] = useState(0);
+
+  // Check auth and fetch data
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       if (data?.user) setUser(data.user);
     });
   }, []);
+
+  useEffect(() => {
+    if (user) {
+      fetchDeposits();
+      fetchLoans();
+    }
+  }, [user]);
 
   const login = async () => {
     setLoading(true);
@@ -35,10 +52,7 @@ export default function App() {
   const signup = async () => {
     setLoading(true);
     setError("");
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
+    const { data, error } = await supabase.auth.signUp({ email, password });
     setLoading(false);
     if (error) setError(error.message);
     else setUser(data.user);
@@ -47,6 +61,102 @@ export default function App() {
   const logout = async () => {
     await supabase.auth.signOut();
     setUser(null);
+  };
+
+  // ---------------- PAYSTACK DEPOSIT ----------------
+  const depositWithPaystack = async () => {
+    if (!user) return alert("Please login first");
+    if (depositAmount <= 0) return alert("Enter a valid amount");
+
+    const paystackAmount = depositAmount * 100; // convert to kobo
+    const handler = window.PaystackPop.setup({
+      key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
+      email: user.email,
+      amount: paystackAmount,
+      currency: "KES",
+      ref: `lock_savings_${Math.floor(Math.random() * 1000000000)}`,
+      onClose: () => alert("Payment window closed"),
+      callback: async (response) => {
+        alert(`Payment successful! Reference: ${response.reference}`);
+        const { error } = await supabase.from("deposits").insert([
+          {
+            user_id: user.id,
+            amount: depositAmount,
+            reference: response.reference,
+            status: "success",
+          },
+        ]);
+        if (error) console.error("Error saving deposit:", error);
+        else {
+          setDepositAmount(0);
+          fetchDeposits(); // refresh total savings
+        }
+      },
+    });
+    handler.openIframe();
+  };
+
+  // ---------------- FETCH DEPOSITS ----------------
+  const fetchDeposits = async () => {
+    const { data, error } = await supabase
+      .from("deposits")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
+
+    if (error) console.error(error);
+    else {
+      setDeposits(data);
+      const total = data.reduce((sum, d) => sum + d.amount, 0);
+      setTotalSavings(total);
+    }
+  };
+
+  // ---------------- WITHDRAW ----------------
+  const withdraw = async () => {
+    if (withdrawAmount <= 0 || withdrawAmount > totalSavings)
+      return alert("Enter a valid amount to withdraw");
+
+    const { error } = await supabase.from("withdrawals").insert([
+      {
+        user_id: user.id,
+        amount: withdrawAmount,
+        status: "pending",
+      },
+    ]);
+
+    if (error) console.error(error);
+    else {
+      alert("Withdrawal request submitted");
+      setWithdrawAmount(0);
+      fetchDeposits();
+    }
+  };
+
+  // ---------------- LOANS ----------------
+  const fetchLoans = async () => {
+    const { data, error } = await supabase
+      .from("loans")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
+
+    if (error) console.error(error);
+    else setLoans(data);
+  };
+
+  const requestLoan = async () => {
+    const amount = prompt("Enter loan amount in KES");
+    if (!amount || isNaN(amount)) return;
+    const { error } = await supabase.from("loans").insert([
+      {
+        user_id: user.id,
+        amount: Number(amount),
+        status: "pending",
+      },
+    ]);
+    if (error) console.error(error);
+    else fetchLoans();
   };
 
   // ---------------- LOGIN PAGE ----------------
@@ -104,24 +214,41 @@ export default function App() {
           <>
             <h2>Welcome 👋</h2>
             <p>{user.email}</p>
-            <p>Total Savings: <strong>KES 0.00</strong></p>
+            <p>
+              Total Savings: <strong>KES {totalSavings.toLocaleString()}</strong>
+            </p>
           </>
         )}
 
         {page === "savings" && (
           <>
             <h2>My Savings</h2>
-            <p>No savings yet.</p>
+            {deposits.length === 0 ? (
+              <p>No savings yet.</p>
+            ) : (
+              <ul>
+                {deposits.map((d) => (
+                  <li key={d.id}>
+                    KES {d.amount} - {new Date(d.created_at).toLocaleString()} -{" "}
+                    {d.status}
+                  </li>
+                ))}
+              </ul>
+            )}
           </>
         )}
 
         {page === "deposit" && (
           <>
             <h2>Deposit Funds</h2>
-            <button
-              style={styles.primary}
-              onClick={() => alert("Paystack deposit coming next")}
-            >
+            <input
+              type="number"
+              placeholder="Enter amount in KES"
+              value={depositAmount}
+              onChange={(e) => setDepositAmount(Number(e.target.value))}
+              style={styles.input}
+            />
+            <button style={styles.primary} onClick={depositWithPaystack}>
               Deposit with Paystack
             </button>
           </>
@@ -130,14 +257,38 @@ export default function App() {
         {page === "withdraw" && (
           <>
             <h2>Withdraw</h2>
-            <p>Withdrawal logic will be added.</p>
+            <p>Total Savings: KES {totalSavings.toLocaleString()}</p>
+            <input
+              type="number"
+              placeholder="Enter amount to withdraw"
+              value={withdrawAmount}
+              onChange={(e) => setWithdrawAmount(Number(e.target.value))}
+              style={styles.input}
+            />
+            <button style={styles.primary} onClick={withdraw}>
+              Submit Withdrawal
+            </button>
           </>
         )}
 
         {page === "loans" && (
           <>
             <h2>Loans</h2>
-            <p>Loan application coming soon.</p>
+            <button style={styles.primary} onClick={requestLoan}>
+              Request Loan
+            </button>
+            {loans.length === 0 ? (
+              <p>No loans yet.</p>
+            ) : (
+              <ul>
+                {loans.map((l) => (
+                  <li key={l.id}>
+                    KES {l.amount} - {new Date(l.created_at).toLocaleString()} -{" "}
+                    {l.status}
+                  </li>
+                ))}
+              </ul>
+            )}
           </>
         )}
       </div>
