@@ -14,8 +14,8 @@ export default function App() {
   const [error, setError] = useState("");
   const [page, setPage] = useState("dashboard");
 
-  const [depositAmount, setDepositAmount] = useState(0);
-  const [withdrawAmount, setWithdrawAmount] = useState(0);
+  const [depositAmount, setDepositAmount] = useState("");
+  const [withdrawAmount, setWithdrawAmount] = useState("");
 
   const [deposits, setDeposits] = useState([]);
   const [loans, setLoans] = useState([]);
@@ -50,7 +50,10 @@ export default function App() {
   const signup = async () => {
     setLoading(true);
     setError("");
-    const { data, error } = await supabase.auth.signUp({ email, password });
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+    });
     setLoading(false);
     if (error) setError(error.message);
     else setUser(data.user);
@@ -61,39 +64,55 @@ export default function App() {
     setUser(null);
   };
 
-  // ---------------- PAYSTACK DEPOSIT ----------------
-  const depositWithPaystack = async () => {
+  // ---------------- PAYSTACK DEPOSIT (SECURE) ----------------
+  const depositWithPaystack = () => {
     if (!user) return alert("Please login first");
-    if (depositAmount <= 0) return alert("Enter a valid amount");
+    if (!depositAmount || depositAmount <= 0)
+      return alert("Enter a valid amount");
 
-    if (!window.PaystackPop)
-      return alert("Paystack not loaded. Refresh the page and try again.");
+    if (!window.PaystackPop) {
+      alert("Paystack not loaded. Refresh page.");
+      return;
+    }
 
     const handler = window.PaystackPop.setup({
       key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
       email: user.email,
-      amount: depositAmount * 100, // convert KES to kobo
+      amount: Number(depositAmount) * 100,
       currency: "KES",
-      ref: `lock_savings_${Math.floor(Math.random() * 1000000000)}`,
-      onClose: () => alert("Payment window closed"),
+      ref: `lock_${Date.now()}`,
+
       callback: async (response) => {
-        alert(`Payment successful! Reference: ${response.reference}`);
+        try {
+          const res = await fetch(
+            `${import.meta.env.VITE_API_URL}/verify-payment`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                reference: response.reference,
+                user_id: user.id,
+                amount: Number(depositAmount),
+              }),
+            }
+          );
 
-        const { error } = await supabase.from("deposits").insert([
-          {
-            user_id: user.id,
-            amount: depositAmount,
-            reference: response.reference,
-            status: "success",
-          },
-        ]);
+          const data = await res.json();
 
-        if (error) console.error("Error saving deposit:", error);
-        else {
-          setDepositAmount(0);
-          fetchDeposits();
+          if (data.success) {
+            alert("Deposit successful ✅");
+            setDepositAmount("");
+            fetchDeposits();
+          } else {
+            alert("Payment verification failed ❌");
+          }
+        } catch (err) {
+          console.error(err);
+          alert("Verification error");
         }
       },
+
+      onClose: () => alert("Payment cancelled"),
     });
 
     handler.openIframe();
@@ -110,20 +129,22 @@ export default function App() {
     if (error) console.error(error);
     else {
       setDeposits(data);
-      const total = data.reduce((sum, d) => sum + d.amount, 0);
+      const total = data.reduce((sum, d) => sum + Number(d.amount), 0);
       setTotalSavings(total);
     }
   };
 
   // ---------------- WITHDRAW ----------------
   const withdraw = async () => {
-    if (withdrawAmount <= 0 || withdrawAmount > totalSavings)
-      return alert("Enter a valid amount to withdraw");
+    if (!withdrawAmount || withdrawAmount <= 0)
+      return alert("Enter valid amount");
+    if (withdrawAmount > totalSavings)
+      return alert("Insufficient balance");
 
     const { error } = await supabase.from("withdrawals").insert([
       {
         user_id: user.id,
-        amount: withdrawAmount,
+        amount: Number(withdrawAmount),
         status: "pending",
       },
     ]);
@@ -131,8 +152,7 @@ export default function App() {
     if (error) console.error(error);
     else {
       alert("Withdrawal request submitted");
-      setWithdrawAmount(0);
-      fetchDeposits();
+      setWithdrawAmount("");
     }
   };
 
@@ -151,6 +171,7 @@ export default function App() {
   const requestLoan = async () => {
     const amount = prompt("Enter loan amount in KES");
     if (!amount || isNaN(amount)) return;
+
     const { error } = await supabase.from("loans").insert([
       {
         user_id: user.id,
@@ -158,6 +179,7 @@ export default function App() {
         status: "pending",
       },
     ]);
+
     if (error) console.error(error);
     else fetchLoans();
   };
@@ -167,7 +189,7 @@ export default function App() {
     return (
       <div style={styles.center}>
         <div style={styles.card}>
-          <h2>Lock Savings Login</h2>
+          <h2>Lock Savings</h2>
           {error && <p style={{ color: "red" }}>{error}</p>}
           <input
             placeholder="Email"
@@ -182,7 +204,7 @@ export default function App() {
             onChange={(e) => setPassword(e.target.value)}
             style={styles.input}
           />
-          <button onClick={login} style={styles.primary}>
+          <button onClick={login} style={styles.primary} disabled={loading}>
             Login
           </button>
           <button onClick={signup} style={styles.secondary}>
@@ -195,7 +217,7 @@ export default function App() {
 
   // ---------------- DASHBOARD ----------------
   return (
-    <div style={{ fontFamily: "Arial", minHeight: "100vh" }}>
+    <div style={{ minHeight: "100vh", fontFamily: "Arial" }}>
       <div style={styles.nav}>
         <strong>Lock Savings</strong>
         <div>
@@ -216,24 +238,9 @@ export default function App() {
             <h2>Welcome 👋</h2>
             <p>{user.email}</p>
             <p>
-              Total Savings: <strong>KES {totalSavings.toLocaleString()}</strong>
+              Total Savings:{" "}
+              <strong>KES {totalSavings.toLocaleString()}</strong>
             </p>
-
-            {/* Dashboard Image */}
-            <div style={{ marginTop: 20, textAlign: "center" }}>
-              <img
-                src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=600&q=80"
-                alt="Beautiful lady"
-                style={{
-                  width: "300px",
-                  borderRadius: 12,
-                  boxShadow: "0 5px 15px rgba(0,0,0,0.2)",
-                }}
-              />
-              <p style={{ marginTop: 10, fontWeight: "bold", fontSize: 16 }}>
-                Save with LockSavings
-              </p>
-            </div>
           </>
         )}
 
@@ -241,13 +248,13 @@ export default function App() {
           <>
             <h2>My Savings</h2>
             {deposits.length === 0 ? (
-              <p>No savings yet.</p>
+              <p>No deposits yet</p>
             ) : (
               <ul>
                 {deposits.map((d) => (
                   <li key={d.id}>
-                    KES {d.amount} - {new Date(d.created_at).toLocaleString()} -{" "}
-                    {d.status}
+                    KES {d.amount} —{" "}
+                    {new Date(d.created_at).toLocaleString()}
                   </li>
                 ))}
               </ul>
@@ -260,9 +267,9 @@ export default function App() {
             <h2>Deposit Funds</h2>
             <input
               type="number"
-              placeholder="Enter amount in KES"
+              placeholder="Amount in KES"
               value={depositAmount}
-              onChange={(e) => setDepositAmount(Number(e.target.value))}
+              onChange={(e) => setDepositAmount(e.target.value)}
               style={styles.input}
             />
             <button style={styles.primary} onClick={depositWithPaystack}>
@@ -274,12 +281,11 @@ export default function App() {
         {page === "withdraw" && (
           <>
             <h2>Withdraw</h2>
-            <p>Total Savings: KES {totalSavings.toLocaleString()}</p>
             <input
               type="number"
-              placeholder="Enter amount to withdraw"
+              placeholder="Amount"
               value={withdrawAmount}
-              onChange={(e) => setWithdrawAmount(Number(e.target.value))}
+              onChange={(e) => setWithdrawAmount(e.target.value)}
               style={styles.input}
             />
             <button style={styles.primary} onClick={withdraw}>
@@ -294,18 +300,13 @@ export default function App() {
             <button style={styles.primary} onClick={requestLoan}>
               Request Loan
             </button>
-            {loans.length === 0 ? (
-              <p>No loans yet.</p>
-            ) : (
-              <ul>
-                {loans.map((l) => (
-                  <li key={l.id}>
-                    KES {l.amount} - {new Date(l.created_at).toLocaleString()} -{" "}
-                    {l.status}
-                  </li>
-                ))}
-              </ul>
-            )}
+            <ul>
+              {loans.map((l) => (
+                <li key={l.id}>
+                  KES {l.amount} — {l.status}
+                </li>
+              ))}
+            </ul>
           </>
         )}
       </div>
@@ -317,8 +318,8 @@ const styles = {
   center: {
     minHeight: "100vh",
     display: "flex",
-    alignItems: "center",
     justifyContent: "center",
+    alignItems: "center",
     background: "#f4f6f8",
   },
   card: {
@@ -340,7 +341,6 @@ const styles = {
     color: "#fff",
     border: "none",
     borderRadius: 6,
-    marginBottom: 8,
     cursor: "pointer",
   },
   secondary: {
