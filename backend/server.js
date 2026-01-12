@@ -1,69 +1,44 @@
-import express from "express";
-import cors from "cors";
-import dotenv from "dotenv";
-import { supabase } from "./supabase.js";
-import { paystack } from "./paystack.js";
+import fetch from "node-fetch";
 
-dotenv.config();
-const app = express();
-app.use(cors());
-app.use(express.json());
+// VERIFY PAYSTACK PAYMENT
+app.post("/verify-paystack", async (req, res) => {
+  const { reference, user_id, amount } = req.body;
 
-app.get("/", (_, res) => res.send("API running ✅"));
+  if (!reference || !user_id || !amount) {
+    return res.status(400).json({ error: "Missing fields" });
+  }
 
-/* VERIFY PAYSTACK PAYMENT */
-app.post("/verify", async (req, res) => {
-  const { reference, user_id, amount, lock_until } = req.body;
+  try {
+    const response = await fetch(
+      `https://api.paystack.co/transaction/verify/${reference}`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+        },
+      }
+    );
 
-  const verify = await paystack.get(`/transaction/verify/${reference}`);
-  if (verify.data.data.status !== "success")
-    return res.status(400).json({ error: "Payment failed" });
+    const data = await response.json();
 
-  await supabase.from("savings").insert([
-    { user_id, amount, lock_until }
-  ]);
+    if (data.status && data.data.status === "success") {
+      // Save to Supabase
+      const { error } = await supabase.from("deposits").insert([
+        {
+          user_id,
+          amount,
+          reference,
+          status: "success",
+        },
+      ]);
 
-  res.json({ success: true });
-});
+      if (error) throw error;
 
-/* WITHDRAW */
-app.post("/withdraw", async (req, res) => {
-  const { amount, recipient } = req.body;
-
-  const transfer = await paystack.post("/transfer", {
-    source: "balance",
-    amount: amount * 100,
-    recipient,
-    reason: "Savings withdrawal"
-  });
-
-  res.json(transfer.data);
-});
-
-/* APPLY LOAN */
-app.post("/loan", async (req, res) => {
-  const { user_id, amount } = req.body;
-
-  const { data } = await supabase
-    .from("savings")
-    .select("amount")
-    .eq("user_id", user_id);
-
-  const totalSaved = data.reduce((a, b) => a + Number(b.amount), 0);
-  if (amount > totalSaved * 0.5)
-    return res.status(400).json({ error: "Loan limit exceeded" });
-
-  const interest = amount * 0.1;
-  await supabase.from("loans").insert([
-    {
-      user_id,
-      amount,
-      interest,
-      total_repay: amount + interest
+      return res.json({ success: true });
+    } else {
+      return res.status(400).json({ error: "Payment not successful" });
     }
-  ]);
-
-  res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Verification failed" });
+  }
 });
-
-app.listen(process.env.PORT || 5000);
