@@ -23,9 +23,17 @@ export default function App() {
 
   // ---------------- AUTH ----------------
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      if (data?.user) setUser(data.user);
+    supabase.auth.getSession().then(({ data }) => {
+      setUser(data?.session?.user || null);
     });
+
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setUser(session?.user || null);
+      }
+    );
+
+    return () => listener.subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -64,28 +72,31 @@ export default function App() {
     setUser(null);
   };
 
-  // ---------------- PAYSTACK DEPOSIT (SECURE) ----------------
+  // ---------------- PAYSTACK DEPOSIT ----------------
   const depositWithPaystack = () => {
     if (!user) return alert("Please login first");
-    if (!depositAmount || depositAmount <= 0)
+    if (!depositAmount || Number(depositAmount) <= 0)
       return alert("Enter a valid amount");
 
     if (!window.PaystackPop) {
-      alert("Paystack not loaded. Refresh page.");
+      alert("Paystack script not loaded");
       return;
     }
 
     const handler = window.PaystackPop.setup({
       key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
       email: user.email,
+
+      // 🔥 PAYSTACK POPUP ONLY SUPPORTS NGN
       amount: Number(depositAmount) * 100,
-      currency: "KES",
+      currency: "NGN",
+
       ref: `lock_${Date.now()}`,
 
       callback: async (response) => {
         try {
           const res = await fetch(
-            `${import.meta.env.VITE_API_URL}/verify-payment`,
+            `${import.meta.env.VITE_BACKEND_URL}/verify-payment`,
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -99,12 +110,12 @@ export default function App() {
 
           const data = await res.json();
 
-          if (data.success) {
+          if (data?.status === true || data?.success) {
             alert("Deposit successful ✅");
             setDepositAmount("");
             fetchDeposits();
           } else {
-            alert("Payment verification failed ❌");
+            alert("Verification failed ❌");
           }
         } catch (err) {
           console.error(err);
@@ -126,11 +137,11 @@ export default function App() {
       .eq("user_id", user.id)
       .order("created_at", { ascending: false });
 
-    if (error) console.error(error);
-    else {
+    if (!error) {
       setDeposits(data);
-      const total = data.reduce((sum, d) => sum + Number(d.amount), 0);
-      setTotalSavings(total);
+      setTotalSavings(
+        data.reduce((sum, d) => sum + Number(d.amount), 0)
+      );
     }
   };
 
@@ -141,47 +152,38 @@ export default function App() {
     if (withdrawAmount > totalSavings)
       return alert("Insufficient balance");
 
-    const { error } = await supabase.from("withdrawals").insert([
-      {
-        user_id: user.id,
-        amount: Number(withdrawAmount),
-        status: "pending",
-      },
-    ]);
+    await supabase.from("withdrawals").insert({
+      user_id: user.id,
+      amount: Number(withdrawAmount),
+      status: "pending",
+    });
 
-    if (error) console.error(error);
-    else {
-      alert("Withdrawal request submitted");
-      setWithdrawAmount("");
-    }
+    alert("Withdrawal request submitted");
+    setWithdrawAmount("");
   };
 
   // ---------------- LOANS ----------------
   const fetchLoans = async () => {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("loans")
       .select("*")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false });
 
-    if (error) console.error(error);
-    else setLoans(data);
+    setLoans(data || []);
   };
 
   const requestLoan = async () => {
-    const amount = prompt("Enter loan amount in KES");
+    const amount = prompt("Enter loan amount");
     if (!amount || isNaN(amount)) return;
 
-    const { error } = await supabase.from("loans").insert([
-      {
-        user_id: user.id,
-        amount: Number(amount),
-        status: "pending",
-      },
-    ]);
+    await supabase.from("loans").insert({
+      user_id: user.id,
+      amount: Number(amount),
+      status: "pending",
+    });
 
-    if (error) console.error(error);
-    else fetchLoans();
+    fetchLoans();
   };
 
   // ---------------- LOGIN PAGE ----------------
@@ -238,8 +240,7 @@ export default function App() {
             <h2>Welcome 👋</h2>
             <p>{user.email}</p>
             <p>
-              Total Savings:{" "}
-              <strong>KES {totalSavings.toLocaleString()}</strong>
+              Total Savings: <strong>₦ {totalSavings}</strong>
             </p>
           </>
         )}
@@ -247,27 +248,23 @@ export default function App() {
         {page === "savings" && (
           <>
             <h2>My Savings</h2>
-            {deposits.length === 0 ? (
-              <p>No deposits yet</p>
-            ) : (
-              <ul>
-                {deposits.map((d) => (
-                  <li key={d.id}>
-                    KES {d.amount} —{" "}
-                    {new Date(d.created_at).toLocaleString()}
-                  </li>
-                ))}
-              </ul>
-            )}
+            <ul>
+              {deposits.map((d) => (
+                <li key={d.id}>
+                  ₦ {d.amount} —{" "}
+                  {new Date(d.created_at).toLocaleString()}
+                </li>
+              ))}
+            </ul>
           </>
         )}
 
         {page === "deposit" && (
           <>
-            <h2>Deposit Funds</h2>
+            <h2>Deposit</h2>
             <input
               type="number"
-              placeholder="Amount in KES"
+              placeholder="Amount (NGN)"
               value={depositAmount}
               onChange={(e) => setDepositAmount(e.target.value)}
               style={styles.input}
@@ -303,7 +300,7 @@ export default function App() {
             <ul>
               {loans.map((l) => (
                 <li key={l.id}>
-                  KES {l.amount} — {l.status}
+                  ₦ {l.amount} — {l.status}
                 </li>
               ))}
             </ul>
