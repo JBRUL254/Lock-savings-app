@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<body>
+<h2>Admin Dashboard</h2>
+<div id="tx"></div>
+
+<script>
+fetch("https://YOUR_BACKEND/api/admin/transactions")
+  .then(r => r.json())
+  .then(data => {
+    document.getElementById("tx").innerHTML =
+      data.map(t =>
+        `<p>${t.profiles.full_name} - ${t.amount} - ${t.type}</p>`
+      ).join("");
+  });
+</script>
+</body>
+</html>
