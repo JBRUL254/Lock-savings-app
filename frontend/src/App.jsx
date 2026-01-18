@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
+/* ---------------- SUPABASE CLIENT ---------------- */
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
   import.meta.env.VITE_SUPABASE_ANON_KEY
@@ -8,106 +9,191 @@ const supabase = createClient(
 
 export default function App() {
   const [user, setUser] = useState(null);
+  const [profile, setProfile] = useState(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [amount, setAmount] = useState("");
+  const [loading, setLoading] = useState(false);
 
+  /* ---------------- AUTH SESSION ---------------- */
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       if (data?.user) setUser(data.user);
     });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user || null);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
+  /* ---------------- LOAD PROFILE ---------------- */
+  useEffect(() => {
+    if (!user) return;
+
+    supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .single()
+      .then(({ data }) => setProfile(data));
+  }, [user]);
+
+  /* ---------------- AUTH ---------------- */
   const login = async () => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    if (!error) setUser(data.user);
-    else alert(error.message);
+    setLoading(true);
+    await supabase.auth.signInWithPassword({ email, password });
+    setLoading(false);
   };
 
   const signup = async () => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
-    if (!error) setUser(data.user);
-    else alert(error.message);
+    setLoading(true);
+    const { data } = await supabase.auth.signUp({ email, password });
+
+    if (data?.user) {
+      await supabase.from("profiles").insert({
+        id: data.user.id,
+        full_name: email.split("@")[0],
+        phone: "",
+        wallet_balance: 0,
+        accepted_terms: true,
+      });
+    }
+
+    setLoading(false);
   };
 
   const logout = async () => {
     await supabase.auth.signOut();
     setUser(null);
+    setProfile(null);
   };
 
-  // ================= PAYSTACK REDIRECT =================
-  const deposit = async () => {
-    if (!amount || amount <= 0) return alert("Enter valid amount");
+  /* ---------------- PAYSTACK DEPOSIT (REDIRECT) ---------------- */
+  const depositWithPaystack = async () => {
+    if (!amount || Number(amount) <= 0) {
+      alert("Enter a valid amount");
+      return;
+    }
 
-    const res = await fetch(`${import.meta.env.VITE_API_URL}/api/paystack`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: user.email,
-        amount,
-      }),
-    });
+    setLoading(true);
 
-    const data = await res.json();
-    if (data.authorization_url) {
-      window.location.href = data.authorization_url;
-    } else {
-      alert("Failed to start payment");
+    try {
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL}/api/paystack/init`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: user.email,
+            amount: Number(amount),
+            user_id: user.id,
+          }),
+        }
+      );
+
+      const data = await res.json();
+
+      if (!data.url) {
+        alert("Failed to initialize payment");
+        return;
+      }
+
+      // 🔥 THIS OPENS THE REAL PAYSTACK CHECKOUT PAGE
+      window.location.href = data.url;
+    } catch (err) {
+      console.error(err);
+      alert("Payment error");
+    } finally {
+      setLoading(false);
     }
   };
 
+  /* ---------------- LOGIN SCREEN ---------------- */
   if (!user) {
     return (
       <div style={styles.center}>
         <div style={styles.card}>
           <h2>Lock Savings</h2>
+
           <input
             placeholder="Email"
+            value={email}
             onChange={(e) => setEmail(e.target.value)}
             style={styles.input}
           />
+
           <input
             type="password"
-            placeholder="Password"
+            placeholder="Password / PIN"
+            value={password}
             onChange={(e) => setPassword(e.target.value)}
             style={styles.input}
           />
-          <button onClick={login} style={styles.primary}>Login</button>
-          <button onClick={signup} style={styles.secondary}>Create Account</button>
+
+          <button onClick={login} style={styles.primary} disabled={loading}>
+            Login
+          </button>
+
+          <button onClick={signup} style={styles.secondary}>
+            Create Account
+          </button>
         </div>
       </div>
     );
   }
 
+  /* ---------------- DASHBOARD ---------------- */
   return (
-    <div style={{ padding: 20 }}>
-      <h2>Welcome 👋</h2>
-      <p>{user.email}</p>
+    <div style={{ padding: 20, fontFamily: "Arial" }}>
+      <div style={styles.nav}>
+        <strong>Lock Savings</strong>
+        <button onClick={logout} style={{ color: "red" }}>
+          Logout
+        </button>
+      </div>
 
-      <h3>Deposit (MPESA / Airtel)</h3>
-      <input
-        type="number"
-        placeholder="Amount in KES"
-        value={amount}
-        onChange={(e) => setAmount(e.target.value)}
-        style={styles.input}
-      />
-      <button onClick={deposit} style={styles.primary}>
-        Pay with Paystack
-      </button>
+      <h2>Welcome, {profile?.full_name}</h2>
+      <p>
+        Account: <strong>{profile?.phone || "Not set"}</strong>
+      </p>
 
-      <br /><br />
-      <button onClick={logout} style={{ color: "red" }}>Logout</button>
+      <h3>
+        Wallet Balance:{" "}
+        <strong>KES {profile?.wallet_balance ?? 0}</strong>
+      </h3>
+
+      <div style={styles.card}>
+        <h3>Deposit Funds</h3>
+
+        <input
+          type="number"
+          placeholder="Enter amount (KES)"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          style={styles.input}
+        />
+
+        <button
+          onClick={depositWithPaystack}
+          style={styles.primary}
+          disabled={loading}
+        >
+          Deposit with Paystack
+        </button>
+
+        <p style={{ fontSize: 12, marginTop: 10 }}>
+          You will be redirected to Paystack to complete payment via MPESA.
+        </p>
+      </div>
     </div>
   );
 }
 
+/* ---------------- STYLES ---------------- */
 const styles = {
   center: {
     minHeight: "100vh",
@@ -117,10 +203,12 @@ const styles = {
     background: "#f4f6f8",
   },
   card: {
-    width: 360,
-    padding: 24,
     background: "#fff",
+    padding: 24,
     borderRadius: 10,
+    boxShadow: "0 10px 30px rgba(0,0,0,0.1)",
+    maxWidth: 360,
+    marginTop: 20,
   },
   input: {
     width: "100%",
@@ -134,6 +222,7 @@ const styles = {
     color: "#fff",
     border: "none",
     borderRadius: 6,
+    cursor: "pointer",
   },
   secondary: {
     width: "100%",
@@ -141,5 +230,12 @@ const styles = {
     background: "#eaeaea",
     border: "none",
     borderRadius: 6,
+    cursor: "pointer",
+    marginTop: 8,
+  },
+  nav: {
+    display: "flex",
+    justifyContent: "space-between",
+    marginBottom: 20,
   },
 };
