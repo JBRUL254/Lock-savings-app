@@ -1,108 +1,86 @@
 import express from "express";
-import dotenv from "dotenv";
 import axios from "axios";
 import cors from "cors";
-import path from "path";
-import fs from "fs";
-import { fileURLToPath } from "url";
+import dotenv from "dotenv";
+import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
-
 const app = express();
-app.use(express.json());
 app.use(cors());
+app.use(express.json());
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
-const PORT = process.env.PORT || 10000;
-const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
-const paymentsFile = path.join(__dirname, "payments.json");
+const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY;
 
-// ================= INIT PAYSTACK PAYMENT =================
-app.post("/api/paystack", async (req, res) => {
+/* ---------------- INITIALIZE PAYMENT ---------------- */
+app.post("/api/paystack/init", async (req, res) => {
+  const { email, amount, user_id } = req.body;
+
   try {
-    const { email, amount } = req.body;
-
-    if (!email || !amount) {
-      return res.status(400).json({ error: "Email and amount are required" });
-    }
-
     const response = await axios.post(
       "https://api.paystack.co/transaction/initialize",
       {
         email,
-        amount: Number(amount) * 100,
+        amount: amount * 100,
         currency: "KES",
-        callback_url: `${process.env.BASE_URL}/api/verify-payment`,
+        metadata: { user_id },
+        callback_url: process.env.PAYSTACK_CALLBACK_URL
       },
       {
         headers: {
-          Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
+          Authorization: `Bearer ${PAYSTACK_SECRET}`,
           "Content-Type": "application/json",
         },
       }
     );
 
-    res.json({
-      authorization_url: response.data.data.authorization_url,
+    res.json({ url: response.data.data.authorization_url });
+  } catch (err) {
+    console.error(err.response?.data || err.message);
+    res.status(500).json({ error: "Paystack init failed" });
+  }
+});
+
+/* ---------------- WEBHOOK (MOST IMPORTANT) ---------------- */
+app.post("/api/paystack/webhook", async (req, res) => {
+  const event = req.body;
+
+  if (event.event === "charge.success") {
+    const data = event.data;
+    const userId = data.metadata.user_id;
+    const amount = data.amount / 100;
+
+    // update wallet
+    await supabase.rpc("increment_wallet", {
+      uid: userId,
+      amt: amount
     });
-  } catch (err) {
-    console.error("Paystack init error:", err.response?.data || err.message);
-    res.status(500).json({ error: "Failed to initialize payment" });
-  }
-});
 
-// ================= VERIFY PAYMENT =================
-app.get("/api/verify-payment", async (req, res) => {
-  const { reference } = req.query;
-  if (!reference) return res.status(400).send("Missing reference");
-
-  try {
-    const verify = await axios.get(
-      `https://api.paystack.co/transaction/verify/${reference}`,
-      {
-        headers: {
-          Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
-        },
-      }
-    );
-
-    const data = verify.data.data;
-
-    const record = {
-      email: data.customer.email,
-      amount: data.amount / 100,
+    // save transaction
+    await supabase.from("transactions").insert({
+      user_id: userId,
+      amount,
+      type: "deposit",
       reference: data.reference,
-      status: data.status,
-      date: new Date().toISOString(),
-    };
-
-    let payments = [];
-    if (fs.existsSync(paymentsFile)) {
-      payments = JSON.parse(fs.readFileSync(paymentsFile));
-    }
-
-    payments.push(record);
-    fs.writeFileSync(paymentsFile, JSON.stringify(payments, null, 2));
-
-    res.send(`
-      <html>
-        <body style="font-family:Arial;text-align:center;margin-top:10%">
-          <h2>✅ Payment Successful</h2>
-          <p>Email: ${record.email}</p>
-          <p>Amount: KES ${record.amount}</p>
-          <p>Status: ${record.status}</p>
-          <a href="${process.env.FRONTEND_URL}">Return to app</a>
-        </body>
-      </html>
-    `);
-  } catch (err) {
-    console.error("Verify error:", err.response?.data || err.message);
-    res.status(500).send("Payment verification failed");
+      status: "success"
+    });
   }
+
+  res.sendStatus(200);
 });
 
-app.listen(PORT, () => {
-  console.log(`✅ Backend running on port ${PORT}`);
+/* ---------------- ADMIN DASHBOARD API ---------------- */
+app.get("/api/admin/transactions", async (req, res) => {
+  const { data } = await supabase
+    .from("transactions")
+    .select("*, profiles(full_name, phone)");
+  res.json(data);
 });
+
+app.listen(10000, () =>
+  console.log("✅ Backend running on port 10000")
+);
