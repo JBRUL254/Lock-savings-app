@@ -1,241 +1,217 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-/* ---------------- SUPABASE CLIENT ---------------- */
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
   import.meta.env.VITE_SUPABASE_ANON_KEY
 );
 
 export default function App() {
+
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [amount, setAmount] = useState("");
-  const [loading, setLoading] = useState(false);
 
-  /* ---------------- AUTH SESSION ---------------- */
+  /* ================= AUTH SESSION ================= */
+
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      if (data?.user) setUser(data.user);
-    });
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user || null);
-    });
+    const getSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      setUser(data?.session?.user || null);
+    };
 
-    return () => subscription.unsubscribe();
+    getSession();
+
+    const { data: listener } =
+      supabase.auth.onAuthStateChange((_event, session) => {
+        setUser(session?.user || null);
+      });
+
+    return () => {
+      listener.subscription.unsubscribe();
+    };
+
   }, []);
 
-  /* ---------------- LOAD PROFILE ---------------- */
+  /* ================= LOAD PROFILE ================= */
+
   useEffect(() => {
+
     if (!user) return;
 
-    supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .single()
-      .then(({ data }) => setProfile(data));
+    const loadProfile = async () => {
+
+      const { data } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", user.id)
+        .single();
+
+      setProfile(data);
+    };
+
+    loadProfile();
+
   }, [user]);
 
-  /* ---------------- AUTH ---------------- */
+  /* ================= LOGIN ================= */
+
   const login = async () => {
-    setLoading(true);
-    await supabase.auth.signInWithPassword({ email, password });
-    setLoading(false);
-  };
 
-  const signup = async () => {
-    setLoading(true);
-    const { data } = await supabase.auth.signUp({ email, password });
-
-    if (data?.user) {
-      await supabase.from("profiles").insert({
-        id: data.user.id,
-        full_name: email.split("@")[0],
-        phone: "",
-        wallet_balance: 0,
-        accepted_terms: true,
+    const { data, error } =
+      await supabase.auth.signInWithPassword({
+        email,
+        password
       });
-    }
 
-    setLoading(false);
-  };
-
-  const logout = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    setProfile(null);
-  };
-
-  /* ---------------- PAYSTACK DEPOSIT (REDIRECT) ---------------- */
-  const depositWithPaystack = async () => {
-    if (!amount || Number(amount) <= 0) {
-      alert("Enter a valid amount");
+    if (error) {
+      alert(error.message);
       return;
     }
 
-    setLoading(true);
-
-    try {
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/paystack/init`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email: user.email,
-            amount: Number(amount),
-            user_id: user.id,
-          }),
-        }
-      );
-
-      const data = await res.json();
-
-      if (!data.url) {
-        alert("Failed to initialize payment");
-        return;
-      }
-
-      // 🔥 THIS OPENS THE REAL PAYSTACK CHECKOUT PAGE
-      window.location.href = data.url;
-    } catch (err) {
-      console.error(err);
-      alert("Payment error");
-    } finally {
-      setLoading(false);
-    }
+    setUser(data.user);
   };
 
-  /* ---------------- LOGIN SCREEN ---------------- */
+  /* ================= SIGNUP ================= */
+
+  const signup = async () => {
+
+    const { data, error } =
+      await supabase.auth.signUp({
+        email,
+        password
+      });
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    const user = data.user;
+
+    await supabase.from("profiles").insert({
+      id: user.id,
+      email: email,
+      wallet_balance: 0
+    });
+
+    alert("Account created. Please login.");
+  };
+
+  /* ================= LOGOUT ================= */
+
+  const logout = async () => {
+
+    await supabase.auth.signOut();
+    setUser(null);
+  };
+
+  /* ================= LOGIN PAGE ================= */
+
   if (!user) {
+
     return (
       <div style={styles.center}>
+
         <div style={styles.card}>
+
           <h2>Lock Savings</h2>
 
           <input
             placeholder="Email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e)=>setEmail(e.target.value)}
             style={styles.input}
           />
 
           <input
             type="password"
-            placeholder="Password / PIN"
+            placeholder="Password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e)=>setPassword(e.target.value)}
             style={styles.input}
           />
 
-          <button onClick={login} style={styles.primary} disabled={loading}>
+          <button onClick={login} style={styles.primary}>
             Login
           </button>
 
           <button onClick={signup} style={styles.secondary}>
             Create Account
           </button>
+
         </div>
+
       </div>
     );
   }
 
-  /* ---------------- DASHBOARD ---------------- */
-  return (
-    <div style={{ padding: 20, fontFamily: "Arial" }}>
-      <div style={styles.nav}>
-        <strong>Lock Savings</strong>
-        <button onClick={logout} style={{ color: "red" }}>
-          Logout
-        </button>
-      </div>
+  /* ================= DASHBOARD ================= */
 
-      <h2>Welcome, {profile?.full_name}</h2>
+  return (
+
+    <div style={{padding:40}}>
+
+      <h2>Dashboard</h2>
+
+      <p><b>Email:</b> {profile?.email}</p>
+
       <p>
-        Account: <strong>{profile?.phone || "Not set"}</strong>
+        <b>Wallet Balance:</b>  
+        KES {profile?.wallet_balance ?? 0}
       </p>
 
-      <h3>
-        Wallet Balance:{" "}
-        <strong>KES {profile?.wallet_balance ?? 0}</strong>
-      </h3>
+      <button onClick={logout}>
+        Logout
+      </button>
 
-      <div style={styles.card}>
-        <h3>Deposit Funds</h3>
-
-        <input
-          type="number"
-          placeholder="Enter amount (KES)"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          style={styles.input}
-        />
-
-        <button
-          onClick={depositWithPaystack}
-          style={styles.primary}
-          disabled={loading}
-        >
-          Deposit with Paystack
-        </button>
-
-        <p style={{ fontSize: 12, marginTop: 10 }}>
-          You will be redirected to Paystack to complete payment via MPESA.
-        </p>
-      </div>
     </div>
+
   );
+
 }
 
-/* ---------------- STYLES ---------------- */
+/* ================= STYLES ================= */
+
 const styles = {
-  center: {
-    minHeight: "100vh",
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    background: "#f4f6f8",
+
+  center:{
+    minHeight:"100vh",
+    display:"flex",
+    justifyContent:"center",
+    alignItems:"center",
+    background:"#f4f6f8"
   },
-  card: {
-    background: "#fff",
-    padding: 24,
-    borderRadius: 10,
-    boxShadow: "0 10px 30px rgba(0,0,0,0.1)",
-    maxWidth: 360,
-    marginTop: 20,
+
+  card:{
+    background:"#fff",
+    padding:30,
+    borderRadius:10,
+    width:350,
+    boxShadow:"0 10px 30px rgba(0,0,0,0.1)"
   },
-  input: {
-    width: "100%",
-    padding: 12,
-    marginBottom: 12,
+
+  input:{
+    width:"100%",
+    padding:12,
+    marginBottom:10
   },
-  primary: {
-    width: "100%",
-    padding: 12,
-    background: "#0a7cff",
-    color: "#fff",
-    border: "none",
-    borderRadius: 6,
-    cursor: "pointer",
+
+  primary:{
+    width:"100%",
+    padding:12,
+    background:"#1e88e5",
+    color:"#fff",
+    border:"none",
+    marginBottom:8
   },
-  secondary: {
-    width: "100%",
-    padding: 12,
-    background: "#eaeaea",
-    border: "none",
-    borderRadius: 6,
-    cursor: "pointer",
-    marginTop: 8,
-  },
-  nav: {
-    display: "flex",
-    justifyContent: "space-between",
-    marginBottom: 20,
-  },
+
+  secondary:{
+    width:"100%",
+    padding:12
+  }
+
 };
