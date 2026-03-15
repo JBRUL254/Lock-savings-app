@@ -1,71 +1,54 @@
-import { useState } from "react"
-import {
-FaWallet,
-FaArrowDown,
-FaArrowUp,
-FaPiggyBank,
-FaHandHoldingUsd,
-FaEye,
-FaEyeSlash
-} from "react-icons/fa"
+import {useState,useEffect} from "react"
+import {FaWallet,FaArrowDown,FaArrowUp,FaPiggyBank,FaHandHoldingUsd,FaEye,FaEyeSlash} from "react-icons/fa"
 
 export default function App(){
 
-const [page,setPage] = useState("login")
-const [phone,setPhone] = useState("")
-const [balance,setBalance] = useState(0)
-const [hideBalance,setHideBalance] = useState(false)
+const [page,setPage]=useState("dashboard")
+const [phone,setPhone]=useState("")
+const [balance,setBalance]=useState(0)
+const [amount,setAmount]=useState("")
+const [hide,setHide]=useState(false)
 
-const API="https://your-backend-url.onrender.com"
+useEffect(()=>{
+if(phone) loadWallet()
+},[phone])
 
-/* LOGIN */
+const loadWallet = async()=>{
 
-const login = async()=>{
-
-const res = await fetch(`${API}/wallet/${phone}`)
+const res = await fetch(`http://localhost:10000/wallet/${phone}`)
 const data = await res.json()
 
 setBalance(data.balance)
-setPage("dashboard")
 
 }
 
+
 /* PAYSTACK DEPOSIT */
 
-const deposit = (amount)=>{
+const deposit = ()=>{
 
-let handler = window.PaystackPop.setup({
+const handler = window.PaystackPop.setup({
 
-key:"YOUR_PAYSTACK_PUBLIC_KEY",
+key:"pk_test_xxxxxxxxxxxxx",
 
-email:`user${phone}@fintech.com`,
+email:`user${phone}@mail.com`,
 
 amount:amount*100,
 
 currency:"KES",
 
 metadata:{
-custom_fields:[
-{
-display_name:"Phone",
-variable_name:"phone",
-value:phone
-}
-]
+phone
 },
 
-callback:function(){
+callback:function(response){
 
-loadWallet()
-
-alert("Deposit successful")
+verifyPayment(response.reference)
 
 },
 
 onClose:function(){
-
 alert("Payment cancelled")
-
 }
 
 })
@@ -74,39 +57,82 @@ handler.openIframe()
 
 }
 
-const loadWallet = async()=>{
 
-const res = await fetch(`${API}/wallet/${phone}`)
+/* VERIFY */
+
+const verifyPayment = async(reference)=>{
+
+const res = await fetch(`http://localhost:10000/verify/${reference}`)
 const data = await res.json()
 
-setBalance(data.balance)
+if(data.success){
+
+alert("Wallet credited!")
+
+loadWallet()
 
 }
 
-/* LOGIN PAGE */
+}
 
-if(page==="login"){
+
+/* WITHDRAW */
+
+const withdraw = async()=>{
+
+await fetch("http://localhost:10000/withdraw",{
+
+method:"POST",
+
+headers:{"Content-Type":"application/json"},
+
+body:JSON.stringify({
+phone,
+amount
+})
+
+})
+
+alert("Withdrawal request sent")
+
+}
+
+
+/* LOAN */
+
+const loan = async()=>{
+
+await fetch("http://localhost:10000/loan",{
+
+method:"POST",
+
+headers:{"Content-Type":"application/json"},
+
+body:JSON.stringify({
+phone,
+amount
+})
+
+})
+
+alert("Loan request submitted")
+
+}
+
+
+if(!phone){
 
 return(
 
-<div style={styles.loginPage}>
+<div style={{padding:40}}>
 
-<div style={styles.loginCard}>
-
-<h2>Lock Savings</h2>
+<h2>Lock Savings Login</h2>
 
 <input
 placeholder="Phone number"
 value={phone}
 onChange={(e)=>setPhone(e.target.value)}
-style={styles.input}
 />
-
-<button onClick={login} style={styles.primaryBtn}>
-Login
-</button>
-
-</div>
 
 </div>
 
@@ -114,35 +140,25 @@ Login
 
 }
 
+
 /* DEPOSIT PAGE */
 
 if(page==="deposit"){
 
 return(
 
-<div style={styles.container}>
+<div style={{padding:40}}>
 
-<h2>Deposit Money</h2>
+<h2>Deposit</h2>
 
-<button
-style={styles.depositBtn}
-onClick={()=>deposit(20)}
->
-Deposit KES 20
-</button>
+<input
+placeholder="Amount"
+value={amount}
+onChange={(e)=>setAmount(e.target.value)}
+/>
 
-<button
-style={styles.depositBtn}
-onClick={()=>deposit(50)}
->
-Deposit KES 50
-</button>
-
-<button
-style={styles.depositBtn}
-onClick={()=>deposit(100)}
->
-Deposit KES 100
+<button onClick={deposit}>
+Deposit with Paystack
 </button>
 
 <button onClick={()=>setPage("dashboard")}>
@@ -155,20 +171,24 @@ Back
 
 }
 
+
 /* WITHDRAW PAGE */
 
 if(page==="withdraw"){
 
 return(
 
-<div style={styles.container}>
+<div style={{padding:40}}>
 
 <h2>Withdraw</h2>
 
-<input placeholder="Amount" style={styles.input}/>
-<input placeholder="M-Pesa Phone" style={styles.input}/>
+<input
+placeholder="Amount"
+value={amount}
+onChange={(e)=>setAmount(e.target.value)}
+/>
 
-<button style={styles.primaryBtn}>
+<button onClick={withdraw}>
 Request Withdrawal
 </button>
 
@@ -182,22 +202,18 @@ Back
 
 }
 
-/* SAVINGS PAGE */
+
+/* SAVINGS */
 
 if(page==="savings"){
 
 return(
 
-<div style={styles.container}>
+<div style={{padding:40}}>
 
-<h2>Savings Goals</h2>
+<h2>Savings</h2>
 
-<input placeholder="Goal name" style={styles.input}/>
-<input placeholder="Target amount" style={styles.input}/>
-
-<button style={styles.primaryBtn}>
-Create Goal
-</button>
+<p>Create manual saving goals (UI placeholder)</p>
 
 <button onClick={()=>setPage("dashboard")}>
 Back
@@ -209,19 +225,26 @@ Back
 
 }
 
-/* LOANS PAGE */
 
-if(page==="loans"){
+/* LOANS */
+
+if(page==="loan"){
 
 return(
 
-<div style={styles.container}>
+<div style={{padding:40}}>
 
-<h2>Loans</h2>
+<h2>Loan</h2>
 
-<button style={styles.loanBtn}>Borrow KES 500</button>
-<button style={styles.loanBtn}>Borrow KES 1000</button>
-<button style={styles.loanBtn}>Borrow KES 2000</button>
+<input
+placeholder="Loan amount"
+value={amount}
+onChange={(e)=>setAmount(e.target.value)}
+/>
+
+<button onClick={loan}>
+Apply Loan
+</button>
 
 <button onClick={()=>setPage("dashboard")}>
 Back
@@ -232,84 +255,50 @@ Back
 )
 
 }
+
 
 /* DASHBOARD */
 
 return(
 
-<div style={styles.container}>
+<div style={{padding:40}}>
 
-<div style={styles.balanceCard}>
-
-<FaWallet size={30} color="white"/>
+<h2>Lock Savings</h2>
 
 <div>
 
-<p style={{color:"#eee"}}>Wallet Balance</p>
+<FaWallet/>
 
-<h2 style={{color:"white"}}>
+<h3>
 
-{hideBalance ? "******" : `KES ${balance}`}
+{hide?"*****":`KES ${balance}`}
 
-</h2>
+<button onClick={()=>setHide(!hide)}>
+
+{hide?<FaEye/>:<FaEyeSlash/>}
+
+</button>
+
+</h3>
 
 </div>
 
-<button
-onClick={()=>setHideBalance(!hideBalance)}
-style={styles.eyeBtn}
->
+<div>
 
-{hideBalance ? <FaEye/> : <FaEyeSlash/>}
-
+<button onClick={()=>setPage("deposit")}>
+<FaArrowDown/> Deposit
 </button>
 
-</div>
-
-<div style={styles.grid}>
-
-<button
-style={styles.card}
-onClick={()=>setPage("deposit")}
->
-
-<FaArrowDown size={28} color="#2ecc71"/>
-
-<p>Deposit</p>
-
+<button onClick={()=>setPage("withdraw")}>
+<FaArrowUp/> Withdraw
 </button>
 
-<button
-style={styles.card}
-onClick={()=>setPage("withdraw")}
->
-
-<FaArrowUp size={28} color="#e74c3c"/>
-
-<p>Withdraw</p>
-
+<button onClick={()=>setPage("savings")}>
+<FaPiggyBank/> Savings
 </button>
 
-<button
-style={styles.card}
-onClick={()=>setPage("savings")}
->
-
-<FaPiggyBank size={28} color="#f1c40f"/>
-
-<p>Savings</p>
-
-</button>
-
-<button
-style={styles.card}
-onClick={()=>setPage("loans")}
->
-
-<FaHandHoldingUsd size={28} color="#9b59b6"/>
-
-<p>Loans</p>
-
+<button onClick={()=>setPage("loan")}>
+<FaHandHoldingUsd/> Loans
 </button>
 
 </div>
@@ -317,103 +306,5 @@ onClick={()=>setPage("loans")}
 </div>
 
 )
-
-}
-
-/* STYLES */
-
-const styles={
-
-container:{
-padding:20,
-fontFamily:"Arial",
-background:"#f5f7fb",
-minHeight:"100vh"
-},
-
-loginPage:{
-display:"flex",
-justifyContent:"center",
-alignItems:"center",
-height:"100vh",
-background:"#1e88e5"
-},
-
-loginCard:{
-background:"white",
-padding:30,
-borderRadius:10,
-width:300
-},
-
-input:{
-width:"100%",
-padding:12,
-marginBottom:10,
-borderRadius:6,
-border:"1px solid #ccc"
-},
-
-primaryBtn:{
-background:"#1e88e5",
-color:"white",
-padding:12,
-border:"none",
-width:"100%",
-borderRadius:6
-},
-
-balanceCard:{
-background:"#1e88e5",
-padding:20,
-borderRadius:12,
-display:"flex",
-justifyContent:"space-between",
-alignItems:"center"
-},
-
-eyeBtn:{
-background:"transparent",
-border:"none",
-color:"white"
-},
-
-grid:{
-display:"grid",
-gridTemplateColumns:"repeat(2,1fr)",
-gap:15,
-marginTop:20
-},
-
-card:{
-background:"white",
-border:"none",
-borderRadius:12,
-padding:25,
-boxShadow:"0 4px 12px rgba(0,0,0,0.1)",
-display:"flex",
-flexDirection:"column",
-alignItems:"center"
-},
-
-depositBtn:{
-padding:14,
-background:"#27ae60",
-color:"white",
-border:"none",
-width:"100%",
-marginBottom:10,
-borderRadius:6
-},
-
-loanBtn:{
-padding:12,
-background:"#9b59b6",
-color:"white",
-border:"none",
-width:"100%",
-marginBottom:10,
-borderRadius:6
-}
 
 }
