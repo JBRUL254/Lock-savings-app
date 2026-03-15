@@ -1,20 +1,1135 @@
-<!DOCTYPE html>
-<html>
-<head>
+Below is a single complete App.jsx (App.js) you can paste into frontend/src/App.jsx.
+It adds:
 
-<title>Lock Savings</title>
+✔ Page navigation (Deposit / Withdraw / Savings / Loans)
+✔ Paystack checkout popup
+✔ M-Pesa withdrawal request (calls backend API)
+✔ Loan request + admin approval flow
+✔ Wallet balance hide/show
+✔ Savings goals
+✔ Transaction history
+✔ Admin dashboard
 
-<link rel="stylesheet" href="styles.css">
+It works with Supabase for data and expects your backend (Node/Express) to handle the M-Pesa payout endpoint.
+
+📦 Required packages
+
+Your package.json should include:
+
+{
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.7",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-icons": "^5.2.1"
+  }
+}
+
+And your index.html must include Paystack:
 
 <script src="https://js.paystack.co/v1/inline.js"></script>
+💻 FULL App.jsx
 
-</head>
+Copy everything below:
 
-<body>
+import { useState, useEffect } from "react"
+import { createClient } from "@supabase/supabase-js"
 
-<div id="app"></div>
+import {
+FaWallet,
+FaArrowDown,
+FaArrowUp,
+FaPiggyBank,
+FaHandHoldingUsd,
+FaEye,
+FaEyeSlash
+} from "react-icons/fa"
 
-<script src="App.js"></script>
+const supabase = createClient(
+import.meta.env.VITE_SUPABASE_URL,
+import.meta.env.VITE_SUPABASE_ANON_KEY
+)
 
-</body>
-</html>
+export default function App(){
+
+const [user,setUser] = useState(null)
+const [profile,setProfile] = useState(null)
+const [page,setPage] = useState("dashboard")
+
+const [email,setEmail] = useState("")
+const [password,setPassword] = useState("")
+const [phone,setPhone] = useState("")
+const [pin,setPin] = useState("")
+
+const [hideBalance,setHideBalance] = useState(false)
+
+const [transactions,setTransactions] = useState([])
+const [savings,setSavings] = useState([])
+const [loanRequests,setLoanRequests] = useState([])
+
+const [goalName,setGoalName] = useState("")
+const [targetAmount,setTargetAmount] = useState("")
+
+const [withdrawAmount,setWithdrawAmount] = useState("")
+const [withdrawPhone,setWithdrawPhone] = useState("")
+
+/* AUTH */
+
+const login = async()=>{
+
+const {data,error} =
+await supabase.auth.signInWithPassword({
+email,
+password
+})
+
+if(error){alert(error.message);return}
+
+setUser(data.user)
+
+}
+
+const signup = async()=>{
+
+const {data,error} =
+await supabase.auth.signUp({
+email,
+password
+})
+
+if(error){alert(error.message);return}
+
+await supabase.from("profiles").insert({
+id:data.user.id,
+email,
+phone,
+pin,
+wallet_balance:0
+})
+
+alert("Account created")
+
+}
+
+const logout = async()=>{
+
+await supabase.auth.signOut()
+setUser(null)
+
+}
+
+/* LOAD DATA */
+
+useEffect(()=>{
+
+if(!user) return
+
+loadProfile()
+loadTransactions()
+loadSavings()
+loadLoans()
+
+},[user])
+
+const loadProfile = async()=>{
+
+const {data} =
+await supabase
+.from("profiles")
+.select("*")
+.eq("id",user.id)
+.single()
+
+setProfile(data)
+
+}
+
+const loadTransactions = async()=>{
+
+const {data} =
+await supabase
+.from("transactions")
+.select("*")
+.eq("user_id",user.id)
+.order("created_at",{ascending:false})
+
+setTransactions(data)
+
+}
+
+const loadSavings = async()=>{
+
+const {data} =
+await supabase
+.from("savings")
+.select("*")
+.eq("user_id",user.id)
+
+setSavings(data)
+
+}
+
+const loadLoans = async()=>{
+
+const {data} =
+await supabase
+.from("loans")
+.select("*")
+
+setLoanRequests(data)
+
+}
+
+/* PAYSTACK DEPOSIT */
+
+const deposit = (amount)=>{
+
+let handler = window.PaystackPop.setup({
+
+key:import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
+
+email:profile.email,
+
+amount:amount*100,
+
+currency:"KES",
+
+callback:function(response){
+
+saveTransaction(amount,"deposit",response.reference)
+
+alert("Deposit successful")
+
+},
+
+onClose:function(){
+
+alert("Transaction cancelled")
+
+}
+
+})
+
+handler.openIframe()
+
+}
+
+const saveTransaction = async(amount,type,reference)=>{
+
+await supabase.from("transactions").insert({
+user_id:user.id,
+type,
+amount,
+status:"success",
+reference
+})
+
+await supabase.rpc("update_wallet",{
+uid:user.id,
+amt:amount
+})
+
+loadProfile()
+loadTransactions()
+
+}
+
+/* MPESA WITHDRAWAL REQUEST */
+
+const withdraw = async()=>{
+
+const res = await fetch("/withdraw",{
+method:"POST",
+headers:{"Content-Type":"application/json"},
+body:JSON.stringify({
+phone:withdrawPhone,
+amount:withdrawAmount,
+userId:user.id
+})
+})
+
+if(res.ok){
+
+alert("Withdrawal request sent")
+
+}else{
+
+alert("Withdrawal failed")
+
+}
+
+}
+
+/* SAVINGS */
+
+const createGoal = async()=>{
+
+await supabase.from("savings").insert({
+user_id:user.id,
+goal_name:goalName,
+target_amount:targetAmount,
+saved_amount:0
+})
+
+alert("Goal created")
+
+loadSavings()
+
+}
+
+/* LOANS */
+
+const applyLoan = async(amount)=>{
+
+await supabase.from("loans").insert({
+user_id:user.id,
+amount,
+status:"pending"
+})
+
+alert("Loan request submitted")
+
+}
+
+/* ADMIN APPROVE LOAN */
+
+const approveLoan = async(id,amount,userId)=>{
+
+await supabase
+.from("loans")
+.update({status:"approved"})
+.eq("id",id)
+
+await supabase.rpc("update_wallet",{
+uid:userId,
+amt:amount
+})
+
+alert("Loan approved")
+
+loadLoans()
+
+}
+
+/* LOGIN PAGE */
+
+if(!user){
+
+return(
+
+<div style={styles.center}>
+
+<div style={styles.card}>
+
+<h2>Lock Savings</h2>
+
+<input placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} style={styles.input}/>
+
+<input placeholder="Phone" value={phone} onChange={e=>setPhone(e.target.value)} style={styles.input}/>
+
+<input type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)} style={styles.input}/>
+
+<input type="password" placeholder="PIN" value={pin} onChange={e=>setPin(e.target.value)} style={styles.input}/>
+
+<button onClick={login} style={styles.primary}>Login</button>
+
+<button onClick={signup} style={styles.secondary}>Create Account</button>
+
+</div>
+
+</div>
+
+)
+
+}
+
+/* ADMIN DASHBOARD */
+
+if(profile?.email === "admin@locksavings.com"){
+
+return(
+
+<div style={styles.container}>
+
+<h2>Admin Dashboard</h2>
+
+<h3>Loan Requests</h3>
+
+{loanRequests.map(l=>(
+<div key={l.id}>
+
+User: {l.user_id}
+
+Amount: {l.amount}
+
+Status: {l.status}
+
+{l.status==="pending" &&
+
+<button onClick={()=>approveLoan(l.id,l.amount,l.user_id)}>
+Approve
+</button>
+
+}
+
+</div>
+))}
+
+</div>
+
+)
+
+}
+
+/* PAGES */
+
+if(page==="deposit"){
+
+return(
+
+<div style={styles.container}>
+
+<h2>Deposit</h2>
+
+<button onClick={()=>deposit(1000)}>Deposit KES 1000</button>
+
+<button onClick={()=>setPage("dashboard")}>Back</button>
+
+</div>
+
+)
+
+}
+
+if(page==="withdraw"){
+
+return(
+
+<div style={styles.container}>
+
+<h2>M-Pesa Withdrawal</h2>
+
+<input placeholder="Phone" value={withdrawPhone} onChange={e=>setWithdrawPhone(e.target.value)} style={styles.input}/>
+
+<input placeholder="Amount" value={withdrawAmount} onChange={e=>setWithdrawAmount(e.target.value)} style={styles.input}/>
+
+<button onClick={withdraw}>Withdraw</button>
+
+<button onClick={()=>setPage("dashboard")}>Back</button>
+
+</div>
+
+)
+
+}
+
+if(page==="savings"){
+
+return(
+
+<div style={styles.container}>
+
+<h2>Savings Goals</h2>
+
+<input placeholder="Goal name" value={goalName} onChange={e=>setGoalName(e.target.value)} style={styles.input}/>
+
+<input placeholder="Target amount" value={targetAmount} onChange={e=>setTargetAmount(e.target.value)} style={styles.input}/>
+
+<button onClick={createGoal}>Create Goal</button>
+
+<button onClick={()=>setPage("dashboard")}>Back</button>
+
+</div>
+
+)
+
+}
+
+if(page==="loans"){
+
+return(
+
+<div style={styles.container}>
+
+<h2>Loans</h2>
+
+<button onClick={()=>applyLoan(500)}>Loan KES 500</button>
+<button onClick={()=>applyLoan(1000)}>Loan KES 1000</button>
+<button onClick={()=>applyLoan(1500)}>Loan KES 1500</button>
+<button onClick={()=>applyLoan(2500)}>Loan KES 2500</button>
+
+<button onClick={()=>setPage("dashboard")}>Back</button>
+
+</div>
+
+)
+
+}
+
+/* DASHBOARD */
+
+return(
+
+<div style={styles.container}>
+
+<div style={styles.header}>
+
+<h2>Lock Savings</h2>
+
+<button onClick={logout}>Logout</button>
+
+</div>
+
+<div style={styles.balanceCard}>
+
+<FaWallet size={28} color="#fff"/>
+
+<div>
+
+<p style={{color:"#eee"}}>Wallet Balance</p>
+
+<h2 style={{color:"#fff"}}>
+{hideBalance ? "*****" : `KES ${profile?.wallet_balance ?? 0}`}
+</h2>
+
+</div>
+
+<button onClick={()=>setHideBalance(!hideBalance)} style={styles.eyeBtn}>
+{hideBalance ? <FaEye/> : <FaEyeSlash/>}
+</button>
+
+</div>
+
+<div style={styles.grid}>
+
+<button style={styles.iconCard} onClick={()=>setPage("deposit")}>
+<FaArrowDown size={28} color="green"/>
+<p>Deposit</p>
+</button>
+
+<button style={styles.iconCard} onClick={()=>setPage("withdraw")}>
+<FaArrowUp size={28} color="red"/>
+<p>Withdraw</p>
+</button>
+
+<button style={styles.iconCard} onClick={()=>setPage("savings")}>
+<FaPiggyBank size={28} color="gold"/>
+<p>Savings</p>
+</button>
+
+<button style={styles.iconCard} onClick={()=>setPage("loans")}>
+<FaHandHoldingUsd size={28} color="purple"/>
+<p>Loans</p>
+</button>
+
+</div>
+
+<h3>Transactions</h3>
+
+<table style={styles.table}>
+
+<thead>
+
+<tr>
+<th>Type</th>
+<th>Amount</th>
+<th>Status</th>
+</tr>
+
+</thead>
+
+<tbody>
+
+{transactions.map(t=>(
+<tr key={t.id}>
+<td>{t.type}</td>
+<td>KES {t.amount}</td>
+<td>{t.status}</td>
+</tr>
+))}
+
+</tbody>
+
+</table>
+
+</div>
+
+)
+
+}
+
+const styles={
+
+container:{padding:20,fontFamily:"Arial",background:"#f4f6f9",minHeight:"100vh"},
+
+center:{display:"flex",justifyContent:"center",alignItems:"center",height:"100vh"},
+
+card:{background:"#fff",padding:20,borderRadius:10},
+
+input:{width:"100%",padding:10,marginBottom:10},
+
+primary:{width:"100%",padding:12,background:"#1e88e5",color:"#fff",border:"none"},
+
+secondary:{width:"100%",padding:12},
+
+header:{display:"flex",justifyContent:"space-between",marginBottom:20},
+
+balanceCard:{background:"#1e88e5",padding:20,borderRadius:10,display:"flex",justifyContent:"space-between",alignItems:"center"},
+
+eyeBtn:{background:"transparent",border:"none",color:"#fff"},
+
+grid:{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:15,marginTop:20},
+
+iconCard:{background:"#fff",padding:20,borderRadius:10,border:"none",display:"flex",flexDirection:"column",alignItems:"center"},
+
+table:{width:"100%",borderCollapse:"collapse"}
+
+}
+
+✅ After pasting:
+
+git add .
+git commit -m "full app update"
+git push
+
+Then redeploy on Render.
+
+💡 Important next step (very critical):
+
+Right now deposits rely on the frontend callback. A real fintech must use a Paystack webhook verification system to prevent fake deposits.
+
+If you want, I can show you how to build:
+
+• real Paystack webhook wallet updates
+• Safaricom Daraja M-Pesa payout integration
+• PIN encryption security
+• professional mobile fintech UI like M-Pesa
+
+These upgrades will make your Lock Savings app production-level.
+
+
+dotenv.config();
+
+const app = express();
+app.use(express.json());
+app.use(cors());
+app.use(express.static("public"));
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
+const PORT = process.env.PORT || 10000;
+const paymentsFile = path.join(__dirname, "payments.json");
+
+// Initialize payment
+app.post("/api/paystack",  async (req, res) => {  add a paystack checkout just like this one under deposit page when depositing to enable user to deposit money to the paystack accont and when payment is verified the wallet updates the data 
+  try {
+    const { phone, amount } = req.body;
+    if (!phone || !amount) {
+      return res.status(400).json({ error: "Phone number and amount are required" });
+    }
+
+    const email = user${phone}@apexnetworks.com;
+
+    const response = await axios.post(
+      "https://api.paystack.co/transaction/initialize",
+      {
+        email,
+        amount: amount * 100,
+        callback_url: "https://apexnetworks.onrender.com/api/verify-payment",
+        metadata: { phone },
+      },
+      {
+        headers: {
+          Authorization: Bearer ${PAYSTACK_SECRET_KEY},
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    res.json({ authorization_url: response.data.data.authorization_url });
+  } catch (error) {
+    console.error("Paystack init error:", error.response?.data || error.message);
+    res.status(500).json({ error: "Payment initialization failed" });
+  }
+});
+
+// Verify payment
+app.get("/api/verify-payment", async (req, res) => {
+  const { reference } = req.query;
+  if (!reference) return res.status(400).send("Missing transaction reference");
+
+  try {
+    const verifyRes = await axios.get(https://api.paystack.co/transaction/verify/${reference}, {
+      headers: { Authorization: Bearer ${PAYSTACK_SECRET_KEY} },
+    });
+
+    const data = verifyRes.data.data;
+    const record = {
+      phone: data.metadata.phone,
+      amount: data.amount / 100,
+      reference: data.reference,
+      status: data.status,
+      date: new Date().toISOString(),
+    };
+
+    let payments = [];
+    if (fs.existsSync(paymentsFile)) payments = JSON.parse(fs.readFileSync(paymentsFile));
+    payments.push(record);
+    fs.writeFileSync(paymentsFile, JSON.stringify(payments, null, 2));
+
+    res.send(
+      <html>
+        <body style="font-family:Poppins; text-align:center; background:#f8f9fb; margin-top:10%;">
+          <div style="background:#fff; padding:40px; border-radius:10px; display:inline-block; box-shadow:0 4px 12px rgba(0,0,0,0.1)">
+            <h2 style="color:#00c853;">✅ Payment Verified!</h2>
+            <p>Phone: ${data.metadata.phone}</p>
+            <p>Amount: Ksh ${(data.amount / 100).toFixed(2)}</p>
+            <p>Status: ${data.status}</p>
+            <a href="/" style="text-decoration:none; color:#2a5298;">Return to Homepage</a>
+          </div>
+        </body>
+      </html>
+    );
+  } catch (err) {
+    console.error("Verification error:", err.response?.data || err.message);
+    res.status(500).send("Payment verification failed");
+  }
+});
+
+app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
+
+app.listen(PORT, () => console.log(✅ Apex Networks server running on port ${PORT}));
+
+You already have a good Paystack payment initialization and verification flow.
+The missing part is updating the user wallet after verification and making the deposit button open the Paystack checkout.
+
+Below is the corrected full backend server.js that:
+
+✅ Initializes Paystack checkout
+✅ Redirects user to Paystack payment page
+✅ Verifies payment after callback
+✅ Updates wallet balance
+✅ Stores transaction history
+✅ Prevents duplicate crediting
+
+✅ Complete server.js (Copy-Paste)
+import express from "express";
+import axios from "axios";
+import cors from "cors";
+import dotenv from "dotenv";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+dotenv.config();
+
+const app = express();
+app.use(express.json());
+app.use(cors());
+app.use(express.static("public"));
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const PORT = process.env.PORT || 10000;
+const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
+
+const paymentsFile = path.join(__dirname, "payments.json");
+const walletsFile = path.join(__dirname, "wallets.json");
+
+/* ================================
+   INITIALIZE PAYMENT
+================================ */
+
+app.post("/api/paystack", async (req, res) => {
+
+  try {
+
+    const { phone, amount } = req.body;
+
+    if (!phone || !amount) {
+      return res.status(400).json({
+        error: "Phone number and amount required"
+      });
+    }
+
+    const email = `user${phone}@apexnetworks.com`;
+
+    const response = await axios.post(
+      "https://api.paystack.co/transaction/initialize",
+      {
+        email,
+        amount: amount * 100,
+        currency: "KES",
+
+        callback_url:
+          "https://apexnetworks.onrender.com/api/verify-payment",
+
+        metadata: {
+          phone
+        }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    res.json({
+      authorization_url:
+        response.data.data.authorization_url
+    });
+
+  } catch (error) {
+
+    console.error(
+      "Paystack init error:",
+      error.response?.data || error.message
+    );
+
+    res.status(500).json({
+      error: "Payment initialization failed"
+    });
+
+  }
+
+});
+
+
+/* ================================
+   VERIFY PAYMENT
+================================ */
+
+app.get("/api/verify-payment", async (req, res) => {
+
+  const { reference } = req.query;
+
+  if (!reference) {
+    return res.status(400).send("Missing reference");
+  }
+
+  try {
+
+    const verifyRes = await axios.get(
+      `https://api.paystack.co/transaction/verify/${reference}`,
+      {
+        headers: {
+          Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`
+        }
+      }
+    );
+
+    const data = verifyRes.data.data;
+
+    if (data.status !== "success") {
+      return res.send("Payment not successful");
+    }
+
+    /* =============================
+       SAVE PAYMENT RECORD
+    ============================= */
+
+    let payments = [];
+
+    if (fs.existsSync(paymentsFile)) {
+      payments = JSON.parse(
+        fs.readFileSync(paymentsFile)
+      );
+    }
+
+    const alreadyPaid =
+      payments.find(p => p.reference === reference);
+
+    if (alreadyPaid) {
+      return res.send("Payment already processed");
+    }
+
+    const record = {
+      phone: data.metadata.phone,
+      amount: data.amount / 100,
+      reference: data.reference,
+      status: data.status,
+      date: new Date().toISOString()
+    };
+
+    payments.push(record);
+
+    fs.writeFileSync(
+      paymentsFile,
+      JSON.stringify(payments, null, 2)
+    );
+
+
+    /* =============================
+       UPDATE WALLET
+    ============================= */
+
+    let wallets = {};
+
+    if (fs.existsSync(walletsFile)) {
+      wallets = JSON.parse(
+        fs.readFileSync(walletsFile)
+      );
+    }
+
+    const phone = data.metadata.phone;
+
+    if (!wallets[phone]) {
+      wallets[phone] = 0;
+    }
+
+    wallets[phone] += data.amount / 100;
+
+    fs.writeFileSync(
+      walletsFile,
+      JSON.stringify(wallets, null, 2)
+    );
+
+
+    /* =============================
+       SUCCESS PAGE
+    ============================= */
+
+    res.send(`
+      <html>
+      <body style="font-family:Poppins;text-align:center;background:#f8f9fb;margin-top:10%">
+        <div style="background:#fff;padding:40px;border-radius:10px;display:inline-block;box-shadow:0 4px 12px rgba(0,0,0,0.1)">
+          <h2 style="color:#00c853">✅ Payment Verified!</h2>
+          <p>Phone: ${phone}</p>
+          <p>Amount: Ksh ${(data.amount / 100).toFixed(2)}</p>
+          <p>Status: ${data.status}</p>
+          <p>Wallet Updated ✔</p>
+
+          <a href="/"
+           style="text-decoration:none;color:#2a5298;font-weight:bold">
+           Return to Dashboard
+          </a>
+        </div>
+      </body>
+      </html>
+    `);
+
+  } catch (err) {
+
+    console.error(
+      "Verification error:",
+      err.response?.data || err.message
+    );
+
+    res.status(500).send("Payment verification failed");
+
+  }
+
+});
+
+
+/* ================================
+   GET WALLET BALANCE
+================================ */
+
+app.get("/api/wallet/:phone", (req, res) => {
+
+  const { phone } = req.params;
+
+  let wallets = {};
+
+  if (fs.existsSync(walletsFile)) {
+    wallets = JSON.parse(fs.readFileSync(walletsFile));
+  }
+
+  const balance = wallets[phone] || 0;
+
+  res.json({ balance });
+
+});
+
+
+/* ================================
+   GET PAYMENT HISTORY
+================================ */
+
+app.get("/api/payments", (req, res) => {
+
+  if (!fs.existsSync(paymentsFile)) {
+    return res.json([]);
+  }
+
+  const payments = JSON.parse(
+    fs.readFileSync(paymentsFile)
+  );
+
+  res.json(payments);
+
+});
+
+
+/* ================================
+   START SERVER
+================================ */
+
+app.listen(PORT, () =>
+  console.log(`✅ Apex Networks server running on port ${PORT}`)
+);
+✅ Frontend Deposit Button (Very Important)
+
+Your Deposit button must call the backend like this:
+
+const deposit = async () => {
+
+const res = await fetch("/api/paystack",{
+method:"POST",
+headers:{"Content-Type":"application/json"},
+body:JSON.stringify({
+phone:userPhone,
+amount:depositAmount
+})
+})
+
+const data = await res.json()
+
+window.location.href = data.authorization_url
+
+}
+
+That will open the Paystack checkout page.
+
+⚠️ Important Security Upgrade (Highly Recommended)
+
+Right now you are using callback verification, but the best practice is to also implement:
+
+• Paystack webhook verification
+• duplicate transaction protection
+• database storage instead of JSON
+
+This prevents fake deposits or replay attacks.
+
+✅ If you want, I can also give you the professional version used by real fintech apps:
+
+✔ Paystack webhook auto wallet credit
+✔ M-Pesa withdrawals API (Daraja)
+✔ Admin dashboard to approve withdrawals and loans
+✔ Fraud protection system
+✔ Mobile banking UI like M-Pesa / Opay
+
+It will make your savings app 10× more secure and production-ready.
+
+a check out paystack.com should appear in deposit page like this one that enables user to deposit money to the paystack account 
+
+What you’re seeing in your screenshot is the hosted checkout page from Paystack.
+Right now your deposit button redirects the whole browser to that page.
+
+But you want it to appear inside the deposit page as a popup modal, like the Paystack inline checkout.
+
+To do that you must use Paystack Inline Script (PaystackPop.setup) instead of redirecting to authorization_url.
+
+✅ 1. Add Paystack Script
+
+Inside your index.html add:
+
+<script src="https://js.paystack.co/v1/inline.js"></script>
+✅ 2. Deposit Page Button
+
+In your deposit page in App.js use this function:
+
+const deposit = (amount) => {
+
+const handler = window.PaystackPop.setup({
+
+key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
+
+email: userEmail,
+
+amount: amount * 100,
+
+currency: "KES",
+
+metadata: {
+custom_fields: [
+{
+display_name: "Phone",
+variable_name: "phone",
+value: userPhone
+}
+]
+},
+
+callback: function(response){
+
+verifyPayment(response.reference)
+
+},
+
+onClose: function(){
+
+alert("Transaction cancelled")
+
+}
+
+})
+
+handler.openIframe()
+
+}
+✅ 3. Verify Payment From Frontend
+
+After the payment popup closes successfully you call your backend:
+
+const verifyPayment = async(reference)=>{
+
+const res = await fetch(`/api/verify-payment?reference=${reference}`)
+
+const data = await res.json()
+
+if(data.success){
+
+alert("Wallet credited!")
+
+loadWallet()
+
+}
+
+}
+✅ 4. Update Backend Verification Endpoint
+
+Change your verify route so it returns JSON instead of HTML.
+
+res.json({
+success:true,
+amount:data.amount/100,
+phone:data.metadata.phone
+})
+
+Your backend already verifies using:
+
+GET https://api.paystack.co/transaction/verify/{reference}
+
+which is correct.
+
+✅ Result
+
+When user presses Deposit:
+
+1️⃣ Deposit page opens
+2️⃣ User enters amount
+3️⃣ Paystack popup appears inside your app
+4️⃣ User pays with M-PESA / Airtel Money / Card
+5️⃣ Backend verifies payment
+6️⃣ Wallet balance updates automatically
+
+Exactly like your screenshot.
+
+⚠️ Important Fix (Very Important)
+
+Your current system can still be abused if someone manually calls /verify-payment.
+
+Production apps use Paystack Webhooks to credit wallets automatically.
+
+Example:
+
+POST /api/paystack-webhook
+
+Triggered by Paystack when payment succeeds.
