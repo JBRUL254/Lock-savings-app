@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react"
+import { useState, useEffect } from "react"
 import { createClient } from "@supabase/supabase-js"
+import PaystackPop from "@paystack/inline-js"
 
 import {
 FaWallet,
@@ -23,61 +24,16 @@ const [profile,setProfile] = useState(null)
 
 const [email,setEmail] = useState("")
 const [password,setPassword] = useState("")
+const [pin,setPin] = useState("")
+const [phone,setPhone] = useState("")
 
 const [hideBalance,setHideBalance] = useState(false)
 
-/* ================= SESSION ================= */
+const [transactions,setTransactions] = useState([])
+const [savings,setSavings] = useState([])
 
-useEffect(()=>{
-
-const getSession = async()=>{
-
-const {data} = await supabase.auth.getSession()
-
-setUser(data?.session?.user || null)
-
-}
-
-getSession()
-
-const {data:listener} =
-supabase.auth.onAuthStateChange((_event,session)=>{
-
-setUser(session?.user || null)
-
-})
-
-return ()=>{
-
-listener.subscription.unsubscribe()
-
-}
-
-},[])
-
-
-/* ================= LOAD PROFILE ================= */
-
-useEffect(()=>{
-
-if(!user) return
-
-const loadProfile = async()=>{
-
-const {data} = await supabase
-.from("profiles")
-.select("*")
-.eq("id",user.id)
-.single()
-
-setProfile(data)
-
-}
-
-loadProfile()
-
-},[user])
-
+const [goalName,setGoalName] = useState("")
+const [targetAmount,setTargetAmount] = useState("")
 
 /* ================= LOGIN ================= */
 
@@ -102,7 +58,6 @@ setUser(data.user)
 
 }
 
-
 /* ================= SIGNUP ================= */
 
 const signup = async()=>{
@@ -122,12 +77,12 @@ return
 
 }
 
-const user = data.user
-
 await supabase.from("profiles").insert({
 
-id:user.id,
+id:data.user.id,
 email:email,
+phone:phone,
+pin:pin,
 wallet_balance:0
 
 })
@@ -135,7 +90,6 @@ wallet_balance:0
 alert("Account created")
 
 }
-
 
 /* ================= LOGOUT ================= */
 
@@ -147,6 +101,166 @@ setUser(null)
 
 }
 
+/* ================= LOAD PROFILE ================= */
+
+useEffect(()=>{
+
+if(!user) return
+
+loadProfile()
+loadTransactions()
+loadSavings()
+
+},[user])
+
+const loadProfile = async()=>{
+
+const {data} =
+await supabase
+
+.from("profiles")
+
+.select("*")
+
+.eq("id",user.id)
+
+.single()
+
+setProfile(data)
+
+}
+
+/* ================= TRANSACTIONS ================= */
+
+const loadTransactions = async()=>{
+
+const {data} =
+await supabase
+
+.from("transactions")
+
+.select("*")
+
+.eq("user_id",user.id)
+
+.order("created_at",{ascending:false})
+
+setTransactions(data)
+
+}
+
+/* ================= SAVINGS ================= */
+
+const loadSavings = async()=>{
+
+const {data} =
+await supabase
+
+.from("savings")
+
+.select("*")
+
+.eq("user_id",user.id)
+
+setSavings(data)
+
+}
+
+const createGoal = async()=>{
+
+await supabase.from("savings").insert({
+
+user_id:user.id,
+goal_name:goalName,
+target_amount:targetAmount
+
+})
+
+alert("Goal created")
+
+loadSavings()
+
+}
+
+/* ================= PAYSTACK DEPOSIT ================= */
+
+const deposit = (amount)=>{
+
+const paystack = new PaystackPop()
+
+paystack.newTransaction({
+
+key:import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
+
+email:profile.email,
+
+amount:amount * 100,
+
+currency:"KES",
+
+onSuccess:(transaction)=>{
+
+saveTransaction(amount,"deposit",transaction.reference)
+
+},
+
+onCancel:()=>{
+
+alert("Payment cancelled")
+
+}
+
+})
+
+}
+
+const saveTransaction = async(amount,type,reference)=>{
+
+await supabase.from("transactions").insert({
+
+user_id:user.id,
+type:type,
+amount:amount,
+status:"success",
+reference:reference
+
+})
+
+await supabase.rpc("update_wallet",{
+
+uid:user.id,
+amt:amount
+
+})
+
+loadProfile()
+loadTransactions()
+
+}
+
+/* ================= LOANS ================= */
+
+const applyLoan = async(amount)=>{
+
+if(profile.wallet_balance < amount/2){
+
+alert("Save more to unlock loan")
+
+return
+
+}
+
+await supabase.from("loans").insert({
+
+user_id:user.id,
+amount:amount,
+status:"pending"
+
+})
+
+alert("Loan request sent")
+
+}
 
 /* ================= LOGIN PAGE ================= */
 
@@ -168,6 +282,13 @@ style={styles.input}
 />
 
 <input
+placeholder="Phone"
+value={phone}
+onChange={(e)=>setPhone(e.target.value)}
+style={styles.input}
+/>
+
+<input
 type="password"
 placeholder="Password"
 value={password}
@@ -175,22 +296,20 @@ onChange={(e)=>setPassword(e.target.value)}
 style={styles.input}
 />
 
-<button
-onClick={login}
-style={styles.primary}
->
+<input
+type="password"
+placeholder="PIN"
+value={pin}
+onChange={(e)=>setPin(e.target.value)}
+style={styles.input}
+/>
 
+<button onClick={login} style={styles.primary}>
 Login
-
 </button>
 
-<button
-onClick={signup}
-style={styles.secondary}
->
-
+<button onClick={signup} style={styles.secondary}>
 Create Account
-
 </button>
 
 </div>
@@ -201,6 +320,31 @@ Create Account
 
 }
 
+/* ================= ADMIN ================= */
+
+if(profile?.email === "admin@locksavings.com"){
+
+return(
+
+<div style={styles.container}>
+
+<h2>Admin Dashboard</h2>
+
+{transactions.map(t=>(
+
+<div key={t.id}>
+
+{t.type} - KES {t.amount}
+
+</div>
+
+))}
+
+</div>
+
+)
+
+}
 
 /* ================= DASHBOARD ================= */
 
@@ -212,19 +356,14 @@ return(
 
 <h2>Lock Savings</h2>
 
-<button
-onClick={logout}
-style={styles.logout}
->
-
+<button onClick={logout} style={styles.logout}>
 Logout
-
 </button>
 
 </div>
 
 
-{/* BALANCE CARD */}
+{/* BALANCE */}
 
 <div style={styles.balanceCard}>
 
@@ -232,11 +371,7 @@ Logout
 
 <div>
 
-<p style={{color:"#ddd"}}>
-
-Wallet Balance
-
-</p>
+<p style={{color:"#ddd"}}>Wallet Balance</p>
 
 <h2 style={{color:"#fff"}}>
 
@@ -260,57 +395,125 @@ style={styles.eyeBtn}
 </div>
 
 
-
-{/* ICON GRID */}
+{/* ICONS */}
 
 <div style={styles.grid}>
 
-<button style={styles.iconCard}>
-
+<button style={styles.iconCard} onClick={()=>deposit(100)}>
 <FaArrowDown size={28} color="#2ecc71"/>
-
 <p>Deposit</p>
-
 </button>
 
-
 <button style={styles.iconCard}>
-
 <FaArrowUp size={28} color="#e74c3c"/>
-
 <p>Withdraw</p>
-
 </button>
 
-
 <button style={styles.iconCard}>
-
 <FaPiggyBank size={28} color="#f1c40f"/>
-
 <p>Savings</p>
-
 </button>
 
-
 <button style={styles.iconCard}>
-
 <FaHandHoldingUsd size={28} color="#9b59b6"/>
-
 <p>Loans</p>
-
 </button>
 
 </div>
 
+
+{/* SAVINGS */}
+
+<div style={styles.card}>
+
+<h3>Create Savings Goal</h3>
+
+<input
+placeholder="Goal name"
+value={goalName}
+onChange={(e)=>setGoalName(e.target.value)}
+style={styles.input}
+/>
+
+<input
+placeholder="Target amount"
+value={targetAmount}
+onChange={(e)=>setTargetAmount(e.target.value)}
+style={styles.input}
+/>
+
+<button onClick={createGoal}>
+Create Goal
+</button>
+
+{savings.map(goal=>(
+
+<div key={goal.id} style={styles.goalCard}>
+
+<h4>{goal.goal_name}</h4>
+
+<p>
+KES {goal.saved_amount ?? 0} / {goal.target_amount}
+</p>
+
+<div style={styles.progressBar}>
+
+<div
+style={{
+width:
+((goal.saved_amount ?? 0) /
+goal.target_amount)*100+"%",
+background:"#2ecc71",
+height:"10px"
+}}
+></div>
+
+</div>
+
+</div>
+
+))}
+
+</div>
 
 
 {/* TRANSACTIONS */}
 
 <div style={styles.card}>
 
-<h3>Recent Transactions</h3>
+<h3>Transactions</h3>
 
-<p>No transactions yet</p>
+<table style={styles.table}>
+
+<thead>
+
+<tr>
+<th>Type</th>
+<th>Amount</th>
+<th>Status</th>
+</tr>
+
+</thead>
+
+<tbody>
+
+{transactions.map(t=>(
+
+<tr key={t.id}>
+
+<td>{t.type}</td>
+
+<td>KES {t.amount}</td>
+
+<td>{t.status}</td>
+
+</tr>
+
+))}
+
+</tbody>
+
+</table>
 
 </div>
 
@@ -320,109 +523,38 @@ style={styles.eyeBtn}
 
 }
 
-
 /* ================= STYLES ================= */
 
-const styles = {
+const styles={
 
-container:{
-padding:20,
-fontFamily:"Arial",
-background:"#f4f6f9",
-minHeight:"100vh"
-},
+container:{padding:20,fontFamily:"Arial",background:"#f4f6f9",minHeight:"100vh"},
 
-center:{
-minHeight:"100vh",
-display:"flex",
-justifyContent:"center",
-alignItems:"center",
-background:"#f4f6f9"
-},
+center:{display:"flex",justifyContent:"center",alignItems:"center",height:"100vh"},
 
-card:{
-background:"#fff",
-padding:25,
-borderRadius:10,
-width:350,
-boxShadow:"0 10px 20px rgba(0,0,0,0.1)"
-},
+card:{background:"#fff",padding:20,borderRadius:10,marginBottom:20},
 
-input:{
-width:"100%",
-padding:12,
-marginBottom:10
-},
+input:{width:"100%",padding:10,marginBottom:10},
 
-primary:{
-width:"100%",
-padding:12,
-background:"#1e88e5",
-color:"#fff",
-border:"none",
-marginBottom:8,
-borderRadius:6
-},
+primary:{width:"100%",padding:12,background:"#1e88e5",color:"#fff",border:"none"},
 
-secondary:{
-width:"100%",
-padding:12,
-borderRadius:6
-},
+secondary:{width:"100%",padding:12},
 
-header:{
-display:"flex",
-justifyContent:"space-between",
-marginBottom:20
-},
+header:{display:"flex",justifyContent:"space-between",marginBottom:20},
 
-logout:{
-background:"#ff4d4d",
-color:"#fff",
-border:"none",
-padding:"8px 14px",
-borderRadius:6
-},
+logout:{background:"red",color:"#fff",border:"none",padding:8},
 
-balanceCard:{
-background:"linear-gradient(135deg,#1e88e5,#42a5f5)",
-borderRadius:12,
-padding:20,
-display:"flex",
-alignItems:"center",
-justifyContent:"space-between",
-marginBottom:25,
-boxShadow:"0 10px 20px rgba(0,0,0,0.15)"
-},
+balanceCard:{background:"#1e88e5",padding:20,borderRadius:10,display:"flex",justifyContent:"space-between",alignItems:"center"},
 
-eyeBtn:{
-background:"transparent",
-border:"none",
-color:"#fff",
-fontSize:18
-},
+eyeBtn:{background:"transparent",border:"none",color:"#fff"},
 
-grid:{
-display:"grid",
-gridTemplateColumns:"repeat(2,1fr)",
-gap:15,
-marginBottom:25
-},
+grid:{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:15,marginTop:20},
 
-iconCard:{
-background:"#fff",
-borderRadius:12,
-padding:20,
-border:"none",
-display:"flex",
-flexDirection:"column",
-alignItems:"center",
-justifyContent:"center",
-gap:8,
-boxShadow:"0 6px 15px rgba(0,0,0,0.1)",
-cursor:"pointer",
-fontWeight:"bold"
-}
+iconCard:{background:"#fff",padding:20,borderRadius:10,border:"none",display:"flex",flexDirection:"column",alignItems:"center"},
+
+progressBar:{width:"100%",background:"#eee",borderRadius:10,overflow:"hidden"},
+
+goalCard:{marginTop:15},
+
+table:{width:"100%",borderCollapse:"collapse"}
 
 }
-
