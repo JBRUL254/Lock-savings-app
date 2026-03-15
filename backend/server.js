@@ -1,259 +1,163 @@
-import express from "express";
-import axios from "axios";
-import cors from "cors";
-import dotenv from "dotenv";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
+import express from "express"
+import axios from "axios"
+import cors from "cors"
+import dotenv from "dotenv"
+import fs from "fs"
 
-dotenv.config();
+dotenv.config()
 
-const app = express();
-app.use(express.json());
-app.use(cors());
-app.use(express.static("public"));
+const app = express()
+app.use(express.json())
+app.use(cors())
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const PORT = process.env.PORT || 10000
+const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY
 
-const PORT = process.env.PORT || 10000;
-const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
+/* DATABASE FILES */
 
-const paymentsFile = path.join(__dirname, "payments.json");
-const walletsFile = path.join(__dirname, "wallets.json");
+const walletFile = "./wallets.json"
+const txFile = "./transactions.json"
 
-/* ================================
-   INITIALIZE PAYMENT
-================================ */
+/* LOAD FILE */
 
-app.post("/api/paystack", async (req, res) => {
+function readFile(file){
+if(!fs.existsSync(file)) return []
+return JSON.parse(fs.readFileSync(file))
+}
 
-  try {
+function saveFile(file,data){
+fs.writeFileSync(file,JSON.stringify(data,null,2))
+}
 
-    const { phone, amount } = req.body;
+/* WALLET BALANCE */
 
-    if (!phone || !amount) {
-      return res.status(400).json({
-        error: "Phone number and amount required"
-      });
-    }
+app.get("/wallet/:phone",(req,res)=>{
 
-    const email = `user${phone}@apexnetworks.com`;
+const wallets = readFile(walletFile)
 
-    const response = await axios.post(
-      "https://api.paystack.co/transaction/initialize",
-      {
-        email,
-        amount: amount * 100,
-        currency: "KES",
+const phone = req.params.phone
 
-        callback_url:
-          "https://apexnetworks.onrender.com/api/verify-payment",
+const wallet = wallets.find(w=>w.phone===phone)
 
-        metadata: {
-          phone
-        }
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
-          "Content-Type": "application/json"
-        }
-      }
-    );
+res.json({balance: wallet?.balance || 0})
 
-    res.json({
-      authorization_url:
-        response.data.data.authorization_url
-    });
+})
 
-  } catch (error) {
+/* PAYSTACK INIT */
 
-    console.error(
-      "Paystack init error:",
-      error.response?.data || error.message
-    );
+app.post("/deposit",async(req,res)=>{
 
-    res.status(500).json({
-      error: "Payment initialization failed"
-    });
+const {phone,amount} = req.body
 
-  }
+try{
 
-});
+const email = `user${phone}@fintech.com`
 
+const response = await axios.post(
+"https://api.paystack.co/transaction/initialize",
+{
+email,
+amount:amount*100,
+callback_url:"https://yourdomain.com/verify",
+metadata:{phone}
+},
+{
+headers:{
+Authorization:`Bearer ${PAYSTACK_SECRET}`
+}
+}
+)
 
-/* ================================
-   VERIFY PAYMENT
-================================ */
+res.json(response.data.data)
 
-app.get("/api/verify-payment", async (req, res) => {
+}catch(err){
 
-  const { reference } = req.query;
+console.log(err)
 
-  if (!reference) {
-    return res.status(400).send("Missing reference");
-  }
+res.status(500).json({error:"payment failed"})
 
-  try {
+}
 
-    const verifyRes = await axios.get(
-      `https://api.paystack.co/transaction/verify/${reference}`,
-      {
-        headers: {
-          Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`
-        }
-      }
-    );
-
-    const data = verifyRes.data.data;
-
-    if (data.status !== "success") {
-      return res.send("Payment not successful");
-    }
+})
 
-    /* =============================
-       SAVE PAYMENT RECORD
-    ============================= */
+/* VERIFY PAYMENT */
 
-    let payments = [];
+app.get("/verify",async(req,res)=>{
 
-    if (fs.existsSync(paymentsFile)) {
-      payments = JSON.parse(
-        fs.readFileSync(paymentsFile)
-      );
-    }
+const reference = req.query.reference
 
-    const alreadyPaid =
-      payments.find(p => p.reference === reference);
+try{
 
-    if (alreadyPaid) {
-      return res.send("Payment already processed");
-    }
+const response = await axios.get(
+`https://api.paystack.co/transaction/verify/${reference}`,
+{
+headers:{
+Authorization:`Bearer ${PAYSTACK_SECRET}`
+}
+}
+)
 
-    const record = {
-      phone: data.metadata.phone,
-      amount: data.amount / 100,
-      reference: data.reference,
-      status: data.status,
-      date: new Date().toISOString()
-    };
+const payment = response.data.data
 
-    payments.push(record);
+if(payment.status !== "success"){
 
-    fs.writeFileSync(
-      paymentsFile,
-      JSON.stringify(payments, null, 2)
-    );
+return res.send("payment failed")
 
+}
 
-    /* =============================
-       UPDATE WALLET
-    ============================= */
+const phone = payment.metadata.phone
+const amount = payment.amount/100
 
-    let wallets = {};
+/* UPDATE WALLET */
 
-    if (fs.existsSync(walletsFile)) {
-      wallets = JSON.parse(
-        fs.readFileSync(walletsFile)
-      );
-    }
+let wallets = readFile(walletFile)
 
-    const phone = data.metadata.phone;
+let wallet = wallets.find(w=>w.phone===phone)
 
-    if (!wallets[phone]) {
-      wallets[phone] = 0;
-    }
+if(!wallet){
 
-    wallets[phone] += data.amount / 100;
+wallet = {phone,balance:0}
 
-    fs.writeFileSync(
-      walletsFile,
-      JSON.stringify(wallets, null, 2)
-    );
+wallets.push(wallet)
 
+}
 
-    /* =============================
-       SUCCESS PAGE
-    ============================= */
+wallet.balance += amount
 
-    res.send(`
-      <html>
-      <body style="font-family:Poppins;text-align:center;background:#f8f9fb;margin-top:10%">
-        <div style="background:#fff;padding:40px;border-radius:10px;display:inline-block;box-shadow:0 4px 12px rgba(0,0,0,0.1)">
-          <h2 style="color:#00c853">✅ Payment Verified!</h2>
-          <p>Phone: ${phone}</p>
-          <p>Amount: Ksh ${(data.amount / 100).toFixed(2)}</p>
-          <p>Status: ${data.status}</p>
-          <p>Wallet Updated ✔</p>
+saveFile(walletFile,wallets)
 
-          <a href="/"
-           style="text-decoration:none;color:#2a5298;font-weight:bold">
-           Return to Dashboard
-          </a>
-        </div>
-      </body>
-      </html>
-    `);
+/* SAVE TRANSACTION */
 
-  } catch (err) {
+let tx = readFile(txFile)
 
-    console.error(
-      "Verification error:",
-      err.response?.data || err.message
-    );
+tx.push({
+phone,
+amount,
+reference,
+type:"deposit",
+date:new Date()
+})
 
-    res.status(500).send("Payment verification failed");
+saveFile(txFile,tx)
 
-  }
+res.send(`
+<h2>Payment successful</h2>
+<p>KES ${amount} added to wallet</p>
+<a href="/">Back</a>
+`)
 
-});
+}catch(err){
 
+console.log(err)
 
-/* ================================
-   GET WALLET BALANCE
-================================ */
+res.send("verification failed")
 
-app.get("/api/wallet/:phone", (req, res) => {
+}
 
-  const { phone } = req.params;
+})
 
-  let wallets = {};
+app.listen(PORT,()=>{
 
-  if (fs.existsSync(walletsFile)) {
-    wallets = JSON.parse(fs.readFileSync(walletsFile));
-  }
+console.log("Fintech server running",PORT)
 
-  const balance = wallets[phone] || 0;
-
-  res.json({ balance });
-
-});
-
-
-/* ================================
-   GET PAYMENT HISTORY
-================================ */
-
-app.get("/api/payments", (req, res) => {
-
-  if (!fs.existsSync(paymentsFile)) {
-    return res.json([]);
-  }
-
-  const payments = JSON.parse(
-    fs.readFileSync(paymentsFile)
-  );
-
-  res.json(payments);
-
-});
-
-
-/* ================================
-   START SERVER
-================================ */
-
-app.listen(PORT, () =>
-  console.log(`✅ Apex Networks server running on port ${PORT}`)
-);
+})
