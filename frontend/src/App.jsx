@@ -20,6 +20,7 @@ export default function App(){
 
 const [user,setUser] = useState(null)
 const [profile,setProfile] = useState(null)
+const [page,setPage] = useState("dashboard")
 
 const [email,setEmail] = useState("")
 const [password,setPassword] = useState("")
@@ -30,67 +31,51 @@ const [hideBalance,setHideBalance] = useState(false)
 
 const [transactions,setTransactions] = useState([])
 const [savings,setSavings] = useState([])
+const [loanRequests,setLoanRequests] = useState([])
 
 const [goalName,setGoalName] = useState("")
 const [targetAmount,setTargetAmount] = useState("")
 
-/* LOGIN */
+const [withdrawAmount,setWithdrawAmount] = useState("")
+const [withdrawPhone,setWithdrawPhone] = useState("")
+
+/* AUTH */
 
 const login = async()=>{
 
 const {data,error} =
 await supabase.auth.signInWithPassword({
-
 email,
 password
-
 })
 
-if(error){
-
-alert(error.message)
-return
-
-}
+if(error){alert(error.message);return}
 
 setUser(data.user)
 
 }
 
-/* SIGNUP */
-
 const signup = async()=>{
 
 const {data,error} =
 await supabase.auth.signUp({
-
 email,
 password
-
 })
 
-if(error){
-
-alert(error.message)
-return
-
-}
+if(error){alert(error.message);return}
 
 await supabase.from("profiles").insert({
-
 id:data.user.id,
-email:email,
-phone:phone,
-pin:pin,
+email,
+phone,
+pin,
 wallet_balance:0
-
 })
 
 alert("Account created")
 
 }
-
-/* LOGOUT */
 
 const logout = async()=>{
 
@@ -108,6 +93,7 @@ if(!user) return
 loadProfile()
 loadTransactions()
 loadSavings()
+loadLoans()
 
 },[user])
 
@@ -124,8 +110,6 @@ setProfile(data)
 
 }
 
-/* TRANSACTIONS */
-
 const loadTransactions = async()=>{
 
 const {data} =
@@ -139,8 +123,6 @@ setTransactions(data)
 
 }
 
-/* SAVINGS */
-
 const loadSavings = async()=>{
 
 const {data} =
@@ -153,19 +135,14 @@ setSavings(data)
 
 }
 
-const createGoal = async()=>{
+const loadLoans = async()=>{
 
-await supabase.from("savings").insert({
+const {data} =
+await supabase
+.from("loans")
+.select("*")
 
-user_id:user.id,
-goal_name:goalName,
-target_amount:targetAmount
-
-})
-
-alert("Goal created")
-
-loadSavings()
+setLoanRequests(data)
 
 }
 
@@ -175,11 +152,11 @@ const deposit = (amount)=>{
 
 let handler = window.PaystackPop.setup({
 
-key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
+key:import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
 
-email: profile.email,
+email:profile.email,
 
-amount: amount * 100,
+amount:amount*100,
 
 currency:"KES",
 
@@ -203,25 +180,19 @@ handler.openIframe()
 
 }
 
-/* SAVE TRANSACTION */
-
 const saveTransaction = async(amount,type,reference)=>{
 
 await supabase.from("transactions").insert({
-
 user_id:user.id,
-type:type,
-amount:amount,
+type,
+amount,
 status:"success",
-reference:reference
-
+reference
 })
 
 await supabase.rpc("update_wallet",{
-
 uid:user.id,
 amt:amount
-
 })
 
 loadProfile()
@@ -229,27 +200,80 @@ loadTransactions()
 
 }
 
+/* MPESA WITHDRAWAL REQUEST */
+
+const withdraw = async()=>{
+
+const res = await fetch("/withdraw",{
+method:"POST",
+headers:{"Content-Type":"application/json"},
+body:JSON.stringify({
+phone:withdrawPhone,
+amount:withdrawAmount,
+userId:user.id
+})
+})
+
+if(res.ok){
+
+alert("Withdrawal request sent")
+
+}else{
+
+alert("Withdrawal failed")
+
+}
+
+}
+
+/* SAVINGS */
+
+const createGoal = async()=>{
+
+await supabase.from("savings").insert({
+user_id:user.id,
+goal_name:goalName,
+target_amount:targetAmount,
+saved_amount:0
+})
+
+alert("Goal created")
+
+loadSavings()
+
+}
+
 /* LOANS */
 
 const applyLoan = async(amount)=>{
 
-if(profile.wallet_balance < amount/2){
+await supabase.from("loans").insert({
+user_id:user.id,
+amount,
+status:"pending"
+})
 
-alert("Save more to unlock loan")
-
-return
+alert("Loan request submitted")
 
 }
 
-await supabase.from("loans").insert({
+/* ADMIN APPROVE LOAN */
 
-user_id:user.id,
-amount:amount,
-status:"pending"
+const approveLoan = async(id,amount,userId)=>{
 
+await supabase
+.from("loans")
+.update({status:"approved"})
+.eq("id",id)
+
+await supabase.rpc("update_wallet",{
+uid:userId,
+amt:amount
 })
 
-alert("Loan request sent")
+alert("Loan approved")
+
+loadLoans()
 
 }
 
@@ -265,13 +289,13 @@ return(
 
 <h2>Lock Savings</h2>
 
-<input placeholder="Email" value={email} onChange={(e)=>setEmail(e.target.value)} style={styles.input}/>
+<input placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} style={styles.input}/>
 
-<input placeholder="Phone" value={phone} onChange={(e)=>setPhone(e.target.value)} style={styles.input}/>
+<input placeholder="Phone" value={phone} onChange={e=>setPhone(e.target.value)} style={styles.input}/>
 
-<input type="password" placeholder="Password" value={password} onChange={(e)=>setPassword(e.target.value)} style={styles.input}/>
+<input type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)} style={styles.input}/>
 
-<input type="password" placeholder="PIN" value={pin} onChange={(e)=>setPin(e.target.value)} style={styles.input}/>
+<input type="password" placeholder="PIN" value={pin} onChange={e=>setPin(e.target.value)} style={styles.input}/>
 
 <button onClick={login} style={styles.primary}>Login</button>
 
@@ -295,14 +319,26 @@ return(
 
 <h2>Admin Dashboard</h2>
 
-{transactions.map(t=>(
+<h3>Loan Requests</h3>
 
-<div key={t.id}>
+{loanRequests.map(l=>(
+<div key={l.id}>
 
-{t.type} - KES {t.amount}
+User: {l.user_id}
+
+Amount: {l.amount}
+
+Status: {l.status}
+
+{l.status==="pending" &&
+
+<button onClick={()=>approveLoan(l.id,l.amount,l.user_id)}>
+Approve
+</button>
+
+}
 
 </div>
-
 ))}
 
 </div>
@@ -311,7 +347,92 @@ return(
 
 }
 
-/* USER DASHBOARD */
+/* PAGES */
+
+if(page==="deposit"){
+
+return(
+
+<div style={styles.container}>
+
+<h2>Deposit</h2>
+
+<button onClick={()=>deposit(1000)}>Deposit KES 1000</button>
+
+<button onClick={()=>setPage("dashboard")}>Back</button>
+
+</div>
+
+)
+
+}
+
+if(page==="withdraw"){
+
+return(
+
+<div style={styles.container}>
+
+<h2>M-Pesa Withdrawal</h2>
+
+<input placeholder="Phone" value={withdrawPhone} onChange={e=>setWithdrawPhone(e.target.value)} style={styles.input}/>
+
+<input placeholder="Amount" value={withdrawAmount} onChange={e=>setWithdrawAmount(e.target.value)} style={styles.input}/>
+
+<button onClick={withdraw}>Withdraw</button>
+
+<button onClick={()=>setPage("dashboard")}>Back</button>
+
+</div>
+
+)
+
+}
+
+if(page==="savings"){
+
+return(
+
+<div style={styles.container}>
+
+<h2>Savings Goals</h2>
+
+<input placeholder="Goal name" value={goalName} onChange={e=>setGoalName(e.target.value)} style={styles.input}/>
+
+<input placeholder="Target amount" value={targetAmount} onChange={e=>setTargetAmount(e.target.value)} style={styles.input}/>
+
+<button onClick={createGoal}>Create Goal</button>
+
+<button onClick={()=>setPage("dashboard")}>Back</button>
+
+</div>
+
+)
+
+}
+
+if(page==="loans"){
+
+return(
+
+<div style={styles.container}>
+
+<h2>Loans</h2>
+
+<button onClick={()=>applyLoan(500)}>Loan KES 500</button>
+<button onClick={()=>applyLoan(1000)}>Loan KES 1000</button>
+<button onClick={()=>applyLoan(1500)}>Loan KES 1500</button>
+<button onClick={()=>applyLoan(2500)}>Loan KES 2500</button>
+
+<button onClick={()=>setPage("dashboard")}>Back</button>
+
+</div>
+
+)
+
+}
+
+/* DASHBOARD */
 
 return(
 
@@ -321,12 +442,9 @@ return(
 
 <h2>Lock Savings</h2>
 
-<button onClick={logout} style={styles.logout}>Logout</button>
+<button onClick={logout}>Logout</button>
 
 </div>
-
-
-{/* BALANCE */}
 
 <div style={styles.balanceCard}>
 
@@ -334,82 +452,43 @@ return(
 
 <div>
 
-<p style={{color:"#ddd"}}>Wallet Balance</p>
+<p style={{color:"#eee"}}>Wallet Balance</p>
 
 <h2 style={{color:"#fff"}}>
-
-{hideBalance ? "******" : `KES ${profile?.wallet_balance ?? 0}`}
-
+{hideBalance ? "*****" : `KES ${profile?.wallet_balance ?? 0}`}
 </h2>
 
 </div>
 
 <button onClick={()=>setHideBalance(!hideBalance)} style={styles.eyeBtn}>
-
 {hideBalance ? <FaEye/> : <FaEyeSlash/>}
-
 </button>
 
 </div>
-
-
-{/* ICON GRID */}
 
 <div style={styles.grid}>
 
-<button style={styles.iconCard} onClick={()=>deposit(100)}>
-
-<FaArrowDown size={28} color="#2ecc71"/>
-
+<button style={styles.iconCard} onClick={()=>setPage("deposit")}>
+<FaArrowDown size={28} color="green"/>
 <p>Deposit</p>
-
 </button>
 
-<button style={styles.iconCard}>
-
-<FaArrowUp size={28} color="#e74c3c"/>
-
+<button style={styles.iconCard} onClick={()=>setPage("withdraw")}>
+<FaArrowUp size={28} color="red"/>
 <p>Withdraw</p>
-
 </button>
 
-<button style={styles.iconCard}>
-
-<FaPiggyBank size={28} color="#f1c40f"/>
-
+<button style={styles.iconCard} onClick={()=>setPage("savings")}>
+<FaPiggyBank size={28} color="gold"/>
 <p>Savings</p>
-
 </button>
 
-<button style={styles.iconCard} onClick={()=>applyLoan(500)}>
-
-<FaHandHoldingUsd size={28} color="#9b59b6"/>
-
+<button style={styles.iconCard} onClick={()=>setPage("loans")}>
+<FaHandHoldingUsd size={28} color="purple"/>
 <p>Loans</p>
-
 </button>
 
 </div>
-
-
-{/* SAVINGS */}
-
-<div style={styles.card}>
-
-<h3>Create Savings Goal</h3>
-
-<input placeholder="Goal name" value={goalName} onChange={(e)=>setGoalName(e.target.value)} style={styles.input}/>
-
-<input placeholder="Target amount" value={targetAmount} onChange={(e)=>setTargetAmount(e.target.value)} style={styles.input}/>
-
-<button onClick={createGoal}>Create Goal</button>
-
-</div>
-
-
-{/* TRANSACTIONS */}
-
-<div style={styles.card}>
 
 <h3>Transactions</h3>
 
@@ -418,13 +497,9 @@ return(
 <thead>
 
 <tr>
-
 <th>Type</th>
-
 <th>Amount</th>
-
 <th>Status</th>
-
 </tr>
 
 </thead>
@@ -432,24 +507,16 @@ return(
 <tbody>
 
 {transactions.map(t=>(
-
 <tr key={t.id}>
-
 <td>{t.type}</td>
-
 <td>KES {t.amount}</td>
-
 <td>{t.status}</td>
-
 </tr>
-
 ))}
 
 </tbody>
 
 </table>
-
-</div>
 
 </div>
 
@@ -463,7 +530,7 @@ container:{padding:20,fontFamily:"Arial",background:"#f4f6f9",minHeight:"100vh"}
 
 center:{display:"flex",justifyContent:"center",alignItems:"center",height:"100vh"},
 
-card:{background:"#fff",padding:20,borderRadius:10,marginBottom:20},
+card:{background:"#fff",padding:20,borderRadius:10},
 
 input:{width:"100%",padding:10,marginBottom:10},
 
@@ -472,8 +539,6 @@ primary:{width:"100%",padding:12,background:"#1e88e5",color:"#fff",border:"none"
 secondary:{width:"100%",padding:12},
 
 header:{display:"flex",justifyContent:"space-between",marginBottom:20},
-
-logout:{background:"red",color:"#fff",border:"none",padding:8},
 
 balanceCard:{background:"#1e88e5",padding:20,borderRadius:10,display:"flex",justifyContent:"space-between",alignItems:"center"},
 
